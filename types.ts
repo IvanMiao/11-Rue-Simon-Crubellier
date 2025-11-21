@@ -15,12 +15,19 @@ export interface InventoryItem {
   type?: 'regular' | 'puzzle_piece';
 }
 
+export interface Interaction {
+  label: string; // The text on the button, e.g. "Open the drawer"
+  response: string; // The immediate result text
+  type?: 'dialogue' | 'action';
+}
+
 export interface NarrativeResponse {
   text: string;
   items: string[];
   mood: string;
   puzzle_hint?: string;
   collectible_item?: InventoryItem;
+  available_interactions?: Interaction[];
 }
 
 export enum GameState {

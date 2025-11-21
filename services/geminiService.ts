@@ -32,6 +32,18 @@ const narrativeSchema = {
         type: { type: Type.STRING, enum: ["regular", "puzzle_piece"] }
       },
       required: ["id", "name", "description"]
+    },
+    available_interactions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          label: { type: Type.STRING },
+          response: { type: Type.STRING },
+          type: { type: Type.STRING, enum: ["dialogue", "action"] }
+        },
+        required: ["label", "response", "type"]
+      }
     }
   },
   required: ["text", "items", "mood"]
@@ -120,53 +132,60 @@ export const generateRoomDescription = async (
     return {
       text: "The room is silent. (API Key missing)",
       items: ["Dust"],
-      mood: "Static"
+      mood: "Static",
+      available_interactions: []
     };
   }
 
   let bibleContext = "";
   if (storyBible) {
     bibleContext = `
-      STORY BIBLE CONTEXT (Hidden from user, but must guide the narrative):
-      - Title: ${storyBible.title}
-      - Themes: ${storyBible.themes.join(", ")}
+      STORY BIBLE (Hidden Background):
       - Mystery: ${storyBible.mystery}
-      - Key Characters: ${storyBible.key_characters.map(c => `${c.name} (${c.role})`).join(", ")}
-      - Plot Threads: ${storyBible.plot_threads.join("; ")}
-      
-      INSTRUCTION: Subtly weave in ONE reference to the bible (a character, a theme, or a clue to the mystery) if it fits naturally. Do not force it.
+      - Characters: ${storyBible.key_characters.map(c => `${c.name} (${c.role})`).join(", ")}
+      - Plots: ${storyBible.plot_threads.join("; ")}
     `;
   }
 
   const knightBonus = isKnightMove
-    ? "SPECIAL INSTRUCTION: The user arrived via a 'Knight's Move' (Chess). Provide a moment of PERFECT CLARITY. The description should be hyper-detailed, revealing a hidden connection or a small epiphany about the building's history."
+    ? "KNIGHT'S MOVE: The user arrived via a Knight's Move. This grants a moment of HYPER-LUCIDITY. Reveal a subtle but crucial detail about the building's history or structure."
     : "";
 
   const inventoryContext = inventory && inventory.length > 0
-    ? `User is carrying: ${inventory.join(", ")}. You may allow them to use an item if it fits the context (e.g. use a key to open a box), but do not force it.`
+    ? `User Inventory: ${inventory.join(", ")}. IF an item here is relevant to an object in the room (e.g. they have a Key and there is a Locked Box), you MUST generate a specific interaction in 'available_interactions' to use it.`
     : "";
 
   const prompt = `
     Describe the room "${roomName}" (ID: ${roomId}) in the style of Georges Perec (La Vie mode d'emploi).
-    
+    Language: Simplified Chinese (简体中文).
+
     ${bibleContext}
     ${knightBonus}
     ${inventoryContext}
 
-    CONTEXT FROM PREVIOUSLY VISITED ROOMS:
-    ${context ? context : "No other rooms visited yet."}
+    PREVIOUS CONTEXT:
+    ${context ? context : "None."}
 
-    Requirements:
-    1. Detailed, observational, listing objects and spatial relations.
-    2. "Infra-ordinary" style.
-    3. Language: Simplified Chinese (简体中文).
-    4. Include a list of 3-5 distinct items found in the room.
-    5. Define the mood (1-2 words).
-    6. Optional: A subtle puzzle hint related to the room's occupant or history.
-    7. OFTEN (40% chance): Include a 'collectible_item' in the JSON response.
-       - If the room is significant (e.g. occupied by a key character from the Bible), make it a 'puzzle_piece' (e.g. "A fragment of the blueprint", "A torn diary page", "A strange gear").
-       - Otherwise, make it a 'regular' item (e.g. "A brass key", "A matchbox").
-       - The item should invite interaction (e.g. "A locked box" rather than just "A box").
+    ### CRITICAL INSTRUCTIONS:
+    1. **Show, Don't Tell**: Describe physical objects, spatial relations, textures, and light. DO NOT use abstract nouns like "emptiness", "solitude", or "absence" to describe objects. DO NOT explain what objects symbolize. Describe the thing itself.
+    2. **Relevance Balance**: randomly decide the "Tension" of this room.
+       - **Low Tension (60%)**: A purely atmospheric, infra-ordinary room. Mundane details of daily life. No mystery.
+       - **High Tension (40%)**: A room that contains a subtle clue or connection to the Story Bible (a character, a letter, a missing object).
+    3. **Interactions**: Generate 1-3 'available_interactions'. These are immediate actions.
+       - Examples: "Read the note on the table", "Open the wardrobe", "Ask the resident about the noise".
+       - For each, provide the 'response' text (what happens/what is said).
+       - If the room has a character, include a 'dialogue' interaction.
+    4. **Collectibles**: Occasionally (30%) include a 'collectible_item'.
+       - If High Tension, make it a 'puzzle_piece'.
+       - If Low Tension, make it a 'regular' item.
+
+    ### OUTPUT FORMAT (JSON):
+    - text: The room description (approx 150 words).
+    - items: List of 3-5 visible objects.
+    - mood: 1-2 words.
+    - puzzle_hint: Optional subtle hint.
+    - collectible_item: Optional.
+    - available_interactions: Array of { label, response, type }.
   `;
 
   try {
@@ -186,9 +205,10 @@ export const generateRoomDescription = async (
   } catch (error) {
     console.error("Generation error:", error);
     return {
-      text: "The fog of memory obscures this room...",
+      text: "The details are lost in the static...",
       items: ["Shadows"],
-      mood: "Uncertain"
+      mood: "Uncertain",
+      available_interactions: []
     };
   }
 };

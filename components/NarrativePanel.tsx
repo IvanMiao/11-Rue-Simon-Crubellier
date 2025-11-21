@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RoomData, NarrativeResponse, StoryBible, InventoryItem } from '../types';
+import { RoomData, NarrativeResponse, StoryBible, InventoryItem, Interaction } from '../types';
 import { generateRoomDescription, inspectItem } from '../services/geminiService';
 
 interface NarrativePanelProps {
@@ -26,20 +26,20 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
   const [loading, setLoading] = useState(false);
   const [inspectedItem, setInspectedItem] = useState<{ name: string, desc: string } | null>(null);
   const [inspectLoading, setInspectLoading] = useState(false);
+  const [interactionHistory, setInteractionHistory] = useState<string[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   // Main logic: Decide whether to use cache or fetch
   useEffect(() => {
     if (selectedRoom) {
       setInspectedItem(null);
+      setInteractionHistory([]); // Clear local interaction history on room change
 
       if (cachedContent) {
-        // We have data, no need to fetch
         setLoading(false);
       } else {
-        // No data, fetch new
-        setLoading(true);
         setLoading(true);
         generateRoomDescription(selectedRoom.id, selectedRoom.name, historyContext, storyBible, inventory, isKnightMove)
           .then((data) => {
@@ -52,14 +52,21 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
           });
       }
     }
-  }, [selectedRoom, cachedContent]); // Intentionally excluding historyContext to avoid re-fetch if context changes elsewhere
+  }, [selectedRoom, cachedContent]);
 
   // Auto-scroll to top on new room
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && !loading) {
       scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [selectedRoom?.id, inspectedItem]);
+  }, [selectedRoom?.id, loading]);
+
+  // Scroll to bottom when interactions are added
+  useEffect(() => {
+    if (bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [interactionHistory]);
 
   const handleInspect = async (item: string) => {
     if (!selectedRoom) return;
@@ -71,6 +78,13 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
 
   const handleBackToRoom = () => {
     setInspectedItem(null);
+  };
+
+  const handleInteraction = (interaction: Interaction) => {
+    // Add the interaction response to the local history
+    // We format it like: "> [Action]\n[Response]"
+    const entry = `\n\n> **${interaction.label}**\n${interaction.response}`;
+    setInteractionHistory(prev => [...prev, entry]);
   };
 
   if (!selectedRoom) {
@@ -87,7 +101,6 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
     );
   }
 
-  // Determine what to display: Cached content or Loading
   const displayContent = cachedContent;
 
   return (
@@ -145,13 +158,41 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
               {/* Room Description */}
               <div className="mb-12 whitespace-pre-wrap text-stone-800">
                 {displayContent?.text}
+
+                {/* Interaction History (Appended) */}
+                {interactionHistory.map((entry, idx) => (
+                    <div key={idx} className="mt-4 whitespace-pre-wrap text-stone-800 animate-fade-in">
+                        {entry}
+                    </div>
+                ))}
+                <div ref={bottomRef} />
               </div>
+
+              {/* Interaction Buttons */}
+              {displayContent?.available_interactions && displayContent.available_interactions.length > 0 && (
+                <div className="my-8 border-t border-b border-stone-200 py-6">
+                   <h3 className="font-typewriter text-xs font-bold uppercase mb-4 tracking-[0.2em] text-stone-400">
+                    Available Actions
+                  </h3>
+                  <div className="flex flex-wrap gap-3">
+                    {displayContent.available_interactions.map((action, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleInteraction(action)}
+                        className="px-4 py-2 border border-stone-800 text-stone-800 font-typewriter text-xs uppercase hover:bg-stone-800 hover:text-white transition-colors"
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Inventory / Lists */}
               {displayContent?.items && displayContent.items.length > 0 && (
-                <div className="mt-12 pt-8 border-t border-stone-200">
+                <div className="mt-8 pt-8 border-t border-stone-200">
                   <h3 className="font-typewriter text-xs font-bold uppercase mb-6 tracking-[0.2em] text-stone-400">
-                    Inventory of Interest
+                    Objects of Note
                   </h3>
                   <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
                     {displayContent.items.map((item, idx) => (
