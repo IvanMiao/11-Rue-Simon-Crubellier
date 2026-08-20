@@ -14,6 +14,8 @@
 
 灵感来自乔治·佩雷克的《人生使用说明书》，技能检定与内心独白接近《极乐迪斯科》。
 
+设计讨论（框架、LLM 边界、美术、音乐）见 [`docs/gameplay-notes.md`](docs/gameplay-notes.md)。
+
 ### 本地运行
 
 **Prerequisites:** Node.js
