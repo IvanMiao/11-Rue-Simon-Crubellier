@@ -1,10 +1,23 @@
-## Run Locally
+## La Vie mode d'emploi — 文学冒险 Roguelike
 
-**Prerequisites:**  Node.js
+西蒙-克吕贝里埃街 11 号。时间停在 1975 年 6 月 23 日 20:00。你带着八种互相顶嘴的能力走进去：感知、逻辑、百科、共情、内境、战栗、修辞、约束。
 
+每一局用新的种子编织一份故事圣经。住户的秘密、三条缠在一起的情节线、以及你为什么会被放进这栋楼，都会重写。案卷柜只显示你已经看见的东西。
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 怎么玩
+
+1. 选一个原型（目录学家 / 通灵者 / 棋手）或自己配点。
+2. 从门厅出发。只能走向：**相邻走廊**、**骑士跳**（金色 ♞）、或 **电梯井**。
+3. 房间里的行动常常是技能检定：2d6 + 技能 ≥ 难度。白检失败可再试；红检只有一次。
+4. 时钟从 20:00 走到 24:00。走房间要花时间。意志归零或午夜到来，这一局结束。
+5. 收集线索与拼图片，找到第一百个房间，试着把缺口按回去。
+
+灵感来自乔治·佩雷克的《人生使用说明书》，技能检定与内心独白接近《极乐迪斯科》。
+
+### 本地运行
+
+**Prerequisites:** Node.js
+
+1. Install dependencies: `npm install`
+2. Set `GEMINI_API_KEY` in `.env.local`（没有 key 时会用内置的后备故事，仍可玩）
+3. `npm run dev`

@@ -18,7 +18,7 @@ const InventoryPanel: React.FC<InventoryPanelProps> = ({ items, onUseItem }) => 
             >
                 <div className="flex items-center gap-2">
                     <h3 className="font-serif font-bold text-sm uppercase tracking-widest text-stone-800 group-hover:text-stone-600 transition-colors">
-                        Inventory
+                        物品栏
                     </h3>
                     {items.length > 0 && (
                         <span className="bg-stone-800 text-white text-[10px] px-1.5 rounded-sm font-typewriter">
@@ -35,7 +35,7 @@ const InventoryPanel: React.FC<InventoryPanelProps> = ({ items, onUseItem }) => 
             <div className={`overflow-hidden transition-all duration-500 ease-in-out ${isOpen ? 'max-h-96 opacity-100 pb-4' : 'max-h-0 opacity-0'}`}>
                 <div className="px-4">
                     {items.length === 0 ? (
-                        <p className="text-xs font-typewriter text-stone-400 italic text-center py-2">Your pockets are empty.</p>
+                        <p className="text-xs font-typewriter text-stone-400 italic text-center py-2">口袋是空的。</p>
                     ) : (
                         <div className="grid grid-cols-2 gap-2">
                             {items.map((item) => (
