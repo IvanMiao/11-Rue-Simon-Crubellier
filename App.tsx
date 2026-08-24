@@ -1,261 +1,386 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import BuildingMap from './components/BuildingMap';
 import NarrativePanel from './components/NarrativePanel';
-import StoryBibleViewer from './components/StoryBibleViewer';
 import InventoryPanel from './components/InventoryPanel';
-import { RoomData, NarrativeResponse, StoryBible, PlayerState, InventoryItem } from './types';
+import CharacterCreate from './components/CharacterCreate';
+import HudBar from './components/HudBar';
+import CaseFile from './components/CaseFile';
+import SkillCheckModal from './components/SkillCheckModal';
+import RunEndScreen from './components/RunEndScreen';
+import {
+  RoomData,
+  PlayerState,
+  InventoryItem,
+  Interaction,
+  Character,
+  SkillCheckResult,
+  SkillId,
+  NarrativeResponse,
+} from './types';
 import { generateStoryBible, generateRoomDescription } from './services/geminiService';
-import { getValidKnightMoves } from './utils/gridLogic';
-
-const API_KEY_STATUS = process.env.API_KEY ? 'Connected' : 'Missing API Key';
-const STORAGE_KEY = 'perec_app_state_v2';
-
-const INITIAL_STATE: PlayerState = {
-  visitedRooms: {},
-  inventory: [],
-  puzzlePiecesCollected: 0,
-  lastMoveWasKnightMove: false
-};
+import { describeMove, getReachableRooms } from './utils/gridLogic';
+import {
+  INITIAL_PLAYER_STATE,
+  applyTime,
+  appendJournal,
+  beginRun,
+  cacheRoom,
+  collectItem,
+  consumeInteraction,
+  applyCheckToState,
+  hundredthUnlocked,
+  internalizeThought,
+  moveTimeCost,
+  skillValue,
+  spendSkillPoint,
+} from './utils/gameLogic';
+import { performSkillCheck, interactionKey } from './utils/skillCheck';
+import { newRunSeed } from './utils/rng';
+import { BUILDING_LAYOUT } from './constants';
+import { STORAGE_KEY } from './constants/skills';
 
 const App: React.FC = () => {
   const [selectedRoom, setSelectedRoom] = useState<RoomData | null>(null);
   const [isMobileMapOpen, setIsMobileMapOpen] = useState(true);
-  const [isBibleOpen, setIsBibleOpen] = useState(false);
+  const [isCaseOpen, setIsCaseOpen] = useState(false);
+  const [gameState, setGameState] = useState<PlayerState>(INITIAL_PLAYER_STATE);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [pendingCheck, setPendingCheck] = useState<{
+    interaction: Interaction;
+    result: SkillCheckResult;
+    rolling: boolean;
+  } | null>(null);
+  const [generatingRoomId, setGeneratingRoomId] = useState<string | null>(null);
+  const generatingRef = useRef<string | null>(null);
 
-  // Game State: Stores content for visited rooms
-  const [gameState, setGameState] = useState<PlayerState>(INITIAL_STATE);
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [isGeneratingBible, setIsGeneratingBible] = useState(false);
-
-  // Load state on mount
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        setGameState(parsed);
-        if (!parsed.storyBible) {
-          // If we have state but no bible (migration), generate one
-          initStoryBible(parsed);
-        } else {
-          setIsInitialized(true);
+        const parsed = JSON.parse(saved) as PlayerState;
+        if (parsed.version === 3 && parsed.character && parsed.runStatus !== 'creating') {
+          setGameState(parsed);
+          if (parsed.currentRoomId) {
+            const room = BUILDING_LAYOUT.find((r) => r.id === parsed.currentRoomId) || null;
+            setSelectedRoom(room);
+          }
         }
       } catch (e) {
-        console.error("Failed to load saved state", e);
-        initStoryBible(INITIAL_STATE);
+        console.error('Failed to load saved state', e);
       }
-    } else {
-      initStoryBible(INITIAL_STATE);
     }
+    setIsHydrated(true);
   }, []);
 
-  const initStoryBible = async (currentGameState: PlayerState) => {
-    setIsGeneratingBible(true);
-    try {
-      const bible = await generateStoryBible();
-      setGameState({ ...currentGameState, storyBible: bible });
-    } catch (e) {
-      console.error("Failed to generate bible", e);
-    } finally {
-      setIsGeneratingBible(false);
-      setIsInitialized(true);
-    }
-  };
-
-  // Save state on change
   useEffect(() => {
-    if (isInitialized) {
+    if (isHydrated) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
     }
-  }, [gameState, isInitialized]);
+  }, [gameState, isHydrated]);
 
-  const validKnightMoves = useMemo(() => {
-    if (!selectedRoom) return new Set<string>();
-    return new Set(getValidKnightMoves(selectedRoom.id));
-  }, [selectedRoom]);
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 2800);
+    return () => window.clearTimeout(id);
+  }, [toast]);
 
-  const handleRoomSelect = (room: RoomData) => {
-    // Check if this is a Knight's move from the current room
-    const isKnightMove = selectedRoom ? validKnightMoves.has(room.id) : false;
+  const hundredth = hundredthUnlocked(gameState);
+  const reachable = useMemo(
+    () => getReachableRooms(gameState.currentRoomId, { hundredthUnlocked: hundredth }),
+    [gameState.currentRoomId, hundredth]
+  );
 
-    // Update state to track the move type for the NEXT generation
-    setGameState(prev => ({
-      ...prev,
-      lastMoveWasKnightMove: isKnightMove
-    }));
+  const showToast = (msg: string) => setToast(msg);
 
-    setSelectedRoom(room);
-    if (window.innerWidth < 768) {
+  const startRunWithCharacter = async (character: Character) => {
+    const seed = newRunSeed();
+    setGameState({
+      ...INITIAL_PLAYER_STATE,
+      runStatus: 'generating',
+      character,
+      runSeed: seed,
+    });
+    try {
+      const bible = await generateStoryBible(seed, character);
+      const started = beginRun(character, seed, bible);
+      setGameState(started);
+      const hall = BUILDING_LAYOUT.find((r) => r.id === '0-5') || null;
+      setSelectedRoom(hall);
       setIsMobileMapOpen(false);
+    } catch (e) {
+      console.error(e);
+      showToast('故事圣经织不出来。再试一次。');
+      setGameState(INITIAL_PLAYER_STATE);
     }
   };
 
-  const toggleMobileView = () => {
-    setIsMobileMapOpen(!isMobileMapOpen);
+  const handleRequestGenerate = useCallback(
+    async (room: RoomData) => {
+      if (gameState.visitedRooms[room.id] || generatingRoomId || generatingRef.current === room.id) return;
+      generatingRef.current = room.id;
+      setGeneratingRoomId(room.id);
+      try {
+        const content = await generateRoomDescription(room.id, room.name, {
+          historyContext: Object.entries(gameState.visitedRooms)
+            .slice(-5)
+            .map(([id, data]) => `Room ${id}: ${(data as NarrativeResponse).text} (Mood: ${(data as NarrativeResponse).mood})`)
+            .join('\n\n'),
+          storyBible: gameState.storyBible,
+          inventory: gameState.inventory.map((i) => i.name),
+          isKnightMove: gameState.lastMoveKind === 'knight' || gameState.lastMoveWasKnightMove,
+          moveKind: gameState.lastMoveKind,
+          character: gameState.character,
+          knownClues: gameState.discoveredFacts,
+          plotSummary: gameState.plotThreads
+            .filter((t) => t.status !== 'unknown')
+            .map((t) => `${t.id}[${t.status}]: ${t.clues.join('; ')}`)
+            .join(' / '),
+          minutesPastEight: gameState.minutesPastEight,
+          morale: gameState.morale,
+          maxMorale: gameState.maxMorale,
+          seed: gameState.runSeed,
+        });
+        setGameState((prev) => cacheRoom(prev, room.id, content));
+      } finally {
+        generatingRef.current = null;
+        setGeneratingRoomId(null);
+      }
+    },
+    [gameState, generatingRoomId]
+  );
+
+  const handleRoomSelect = (room: RoomData) => {
+    if (gameState.runStatus !== 'playing') return;
+    const move = describeMove(reachable, room.id);
+    if (move === 'blocked' && room.id !== gameState.currentRoomId) {
+      showToast('走不到。试试相邻的走廊，或者那步骑士跳。');
+      return;
+    }
+    if (room.id !== gameState.currentRoomId) {
+      const cost = moveTimeCost(move === 'blocked' ? 'walk' : move);
+      setGameState((prev) => ({
+        ...applyTime(prev, cost),
+        currentRoomId: room.id,
+        lastMoveWasKnightMove: move === 'knight',
+        lastMoveWasWalk: move === 'walk',
+        lastMoveKind: move === 'blocked' ? 'walk' : move,
+      }));
+    }
+    setSelectedRoom(room);
+    if (window.innerWidth < 768) setIsMobileMapOpen(false);
   };
 
-  // Callback when NarrativePanel generates new content
-  // Callback when NarrativePanel generates new content
-  const handleContentGenerated = (roomId: string, content: NarrativeResponse) => {
-    setGameState(prev => {
-      const newState = {
-        ...prev,
-        visitedRooms: {
-          ...prev.visitedRooms,
-          [roomId]: content
-        }
-      };
-      return newState;
-    });
+  const handleBlocked = (room: RoomData) => {
+    showToast(`${room.name || '那个格子'}现在走不到。骑士跳会发光。`);
   };
 
   const handleCollectItem = (item: InventoryItem) => {
-    setGameState(prev => {
-      // Avoid duplicates
-      if (prev.inventory.some(i => i.id === item.id)) return prev;
-
-      const isPuzzlePiece = item.type === 'puzzle_piece';
-      const newPuzzleCount = isPuzzlePiece ? prev.puzzlePiecesCollected + 1 : prev.puzzlePiecesCollected;
-
+    setGameState((prev) => {
+      if (!selectedRoom) return collectItem(prev, item);
+      const room = prev.visitedRooms[selectedRoom.id];
+      const collected = collectItem(prev, item);
+      if (!room) return collected;
       return {
-        ...prev,
-        inventory: [...prev.inventory, item],
-        puzzlePiecesCollected: newPuzzleCount
+        ...collected,
+        visitedRooms: {
+          ...collected.visitedRooms,
+          [selectedRoom.id]: { ...room, collectible_item: undefined },
+        },
       };
     });
+    showToast(item.type === 'puzzle_piece' ? `拼图片：${item.name}` : `收下：${item.name}`);
+  };
 
-    if (item.type === 'puzzle_piece') {
-      alert(`PUZZLE PIECE FOUND: ${item.name}\n\n"This feels significant..."`);
-    } else {
-      alert(`You collected: ${item.name}`);
+  const handleInteract = (interaction: Interaction) => {
+    if (!selectedRoom || gameState.runStatus !== 'playing') return;
+    const id = interaction.id || interaction.label;
+    const key = interactionKey(selectedRoom.id, id);
+
+    if (interaction.skill && interaction.difficulty) {
+      if (interaction.kind === 'red' && gameState.attemptedRedChecks.includes(key)) return;
+      if (gameState.resolvedChecks[key] === true) return;
+
+      const result = performSkillCheck({
+        skill: interaction.skill,
+        skillValue: skillValue(gameState, interaction.skill),
+        difficulty: interaction.difficulty,
+        kind: interaction.kind,
+        seed: gameState.runSeed,
+        salt: `${key}:${gameState.checkLog.length}:${gameState.minutesPastEight}`,
+      });
+      setPendingCheck({ interaction: { ...interaction, id }, result, rolling: true });
+      window.setTimeout(() => {
+        setPendingCheck((curr) => (curr ? { ...curr, rolling: false } : curr));
+      }, 900);
+      return;
+    }
+
+    const text = interaction.response;
+    setGameState((prev) =>
+      consumeInteraction(
+        appendJournal(applyTime(prev, 5), selectedRoom.id, `> ${interaction.label}\n${text}`),
+        selectedRoom.id,
+        id
+      )
+    );
+  };
+
+  const finishPendingCheck = () => {
+    if (!pendingCheck || !selectedRoom) return;
+    const { interaction, result } = pendingCheck;
+    const id = interaction.id || interaction.label;
+    const body = result.success
+      ? interaction.success_response || interaction.response
+      : interaction.failure_response || '什么也没有发生，只是你自己出了丑。';
+    const header = `${result.success ? '成功' : '失败'} · ${interaction.label}`;
+    setGameState((prev) =>
+      appendJournal(
+        applyCheckToState(prev, selectedRoom.id, id, interaction.label, result, {
+          clue: interaction.clue,
+          plot_flag: interaction.plot_flag,
+          morale_on_success: interaction.morale_on_success,
+          morale_on_fail: interaction.morale_on_fail,
+          resolves_mystery: interaction.resolves_mystery,
+        }),
+        selectedRoom.id,
+        `> ${header}\n${body}`
+      )
+    );
+    setPendingCheck(null);
+    if (result.success && interaction.resolves_mystery) {
+      showToast('拼图合上了。');
+    } else if (!result.success) {
+      showToast('检定失败。意志被削去一角。');
     }
   };
 
   const handleReset = () => {
-    if (window.confirm("Are you sure you want to erase all memories of the building? This cannot be undone.")) {
-      localStorage.removeItem(STORAGE_KEY);
-      setGameState(INITIAL_STATE);
-      setSelectedRoom(null);
-      setIsMobileMapOpen(true);
-      setIsInitialized(false);
-      initStoryBible(INITIAL_STATE);
+    if (gameState.runStatus === 'playing') {
+      if (!window.confirm('放弃这一局？种子、案卷和意志都会消失。')) return;
     }
+    localStorage.removeItem(STORAGE_KEY);
+    setGameState(INITIAL_PLAYER_STATE);
+    setSelectedRoom(null);
+    setIsMobileMapOpen(true);
+    setIsCaseOpen(false);
   };
 
-  // Build a context string from previously visited rooms (last 5 to provide continuity)
-  const historyContext = useMemo(() => {
-    const entries = Object.entries(gameState.visitedRooms);
-    // Take the last 5 visited roughly
-    const contextItems = entries.slice(-5).map(([id, data]) => {
-      const roomData = data as NarrativeResponse;
-      // User requested full text context. 
-      // Format: "Room [ID]: [Full Description] (Mood: [Mood])"
-      return `Room (ID ${id}): ${roomData.text} (Mood: ${roomData.mood})`;
+  const visitedIds = useMemo(
+    () => new Set(Object.keys(gameState.visitedRooms)),
+    [gameState.visitedRooms]
+  );
+
+  const disabledChecks = useMemo(() => {
+    if (!selectedRoom) return new Set<string>();
+    const set = new Set<string>();
+    const room = gameState.visitedRooms[selectedRoom.id];
+    room?.available_interactions?.forEach((it) => {
+      const id = it.id || it.label;
+      const key = interactionKey(selectedRoom.id, id);
+      if (gameState.resolvedChecks[key] === true) set.add(id);
+      if (it.kind === 'red' && gameState.attemptedRedChecks.includes(key)) set.add(id);
     });
-    return contextItems.join("\n\n");
-  }, [gameState.visitedRooms]);
+    return set;
+  }, [gameState, selectedRoom]);
 
-  // Set of visited IDs for the map
-  const visitedIds = useMemo(() => new Set(Object.keys(gameState.visitedRooms)), [gameState.visitedRooms]);
+  if (!isHydrated) {
+    return <div className="h-screen w-screen bg-[#eae7dc]" />;
+  }
 
-  if (!isInitialized || isGeneratingBible) {
+  if (gameState.runStatus === 'creating') {
+    return <CharacterCreate onBegin={startRunWithCharacter} />;
+  }
+
+  if (gameState.runStatus === 'generating') {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#eae7dc] text-stone-800 font-typewriter">
         <div className="w-16 h-16 border-4 border-stone-800 border-t-transparent rounded-full animate-spin mb-8"></div>
-        <h2 className="text-xl uppercase tracking-widest mb-2">Constructing Building History</h2>
-        <p className="text-sm text-stone-500 animate-pulse">Weaving themes, secrets, and shadows...</p>
+        <h2 className="text-xl uppercase tracking-widest mb-2">为这一局编织圣经</h2>
+        <p className="text-sm text-stone-500 animate-pulse">种子会决定谁在说谎，哪一块拼图缺席。</p>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-stone-50 text-stone-900">
-      {/* Navigation Bar */}
-      <nav className="h-14 flex items-center justify-between px-4 bg-white border-b border-stone-300 z-30 shrink-0 shadow-sm">
-        <div className="flex items-center gap-2">
-          <span className="font-serif font-bold text-lg hidden md:inline">La Vie mode d'emploi</span>
-          <span className="font-serif font-bold text-lg md:hidden">La Vie...</span>
-          <span className="text-xs font-typewriter text-stone-400 border border-stone-200 px-1 rounded">10x10 GRID</span>
-        </div>
+      <HudBar
+        state={gameState}
+        onOpenCase={() => setIsCaseOpen(true)}
+        onOpenSheet={() => setIsCaseOpen(true)}
+        onReset={handleReset}
+        onToggleMap={() => setIsMobileMapOpen(!isMobileMapOpen)}
+        isMobileMapOpen={isMobileMapOpen}
+      />
 
-        <div className="flex items-center gap-3">
-          {/* Archives Button */}
-          <button
-            onClick={() => setIsBibleOpen(true)}
-            className="font-typewriter text-xs px-3 py-1 border border-stone-400 rounded hover:bg-stone-100 text-stone-600 uppercase tracking-wider"
-          >
-            Archives
-          </button>
-
-          {/* Reset Button */}
-          <button
-            onClick={handleReset}
-            className="font-typewriter text-xs text-red-800 hover:text-red-600 hover:underline uppercase"
-            title="Reset all progress"
-          >
-            Reset Story
-          </button>
-
-          <button
-            onClick={toggleMobileView}
-            className="md:hidden font-typewriter text-xs px-3 py-1 border border-stone-800 rounded hover:bg-stone-800 hover:text-white transition"
-          >
-            {isMobileMapOpen ? 'READ' : 'MAP'}
-          </button>
-        </div>
-      </nav>
-
-      {/* Main Split View */}
       <div className="flex flex-1 overflow-hidden relative">
-
-        {/* Left Panel: Map */}
-        <div className={`
+        <div
+          className={`
           absolute inset-0 md:relative md:w-1/2 lg:w-5/12 xl:w-1/2 z-10
           transition-transform duration-500 ease-in-out bg-[#eae7dc]
           ${isMobileMapOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        `}>
+        `}
+        >
           <BuildingMap
             onRoomSelect={handleRoomSelect}
-            selectedRoomId={selectedRoom?.id || null}
+            selectedRoomId={selectedRoom?.id || gameState.currentRoomId}
             visitedRoomIds={visitedIds}
-            validKnightMoves={validKnightMoves}
+            reachable={reachable}
             puzzlePiecesCollected={gameState.puzzlePiecesCollected}
+            onBlocked={handleBlocked}
           />
         </div>
 
-        {/* Right Panel: Narrative & Inventory */}
-        <div className={`
+        <div
+          className={`
             absolute inset-0 md:relative md:w-1/2 lg:w-7/12 xl:w-1/2 z-0 bg-[#fdfbf7]
             transition-transform duration-500 ease-in-out flex flex-col
             ${!isMobileMapOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
-          `}>
+          `}
+        >
           <div className="flex-1 overflow-hidden relative">
             <NarrativePanel
               selectedRoom={selectedRoom}
               cachedContent={selectedRoom ? gameState.visitedRooms[selectedRoom.id] : undefined}
-              onContentGenerated={handleContentGenerated}
-              historyContext={historyContext}
-              storyBible={gameState.storyBible}
-              inventory={gameState.inventory.map(i => i.name)}
-              isKnightMove={gameState.lastMoveWasKnightMove}
+              onRequestGenerate={handleRequestGenerate}
+              generating={generatingRoomId === selectedRoom?.id}
+              onInteract={handleInteract}
               onCollectItem={handleCollectItem}
+              disabledChecks={disabledChecks}
             />
           </div>
-
-          {/* Inventory Panel (Fixed at bottom of right panel) */}
           <div className="z-20 shrink-0">
             <InventoryPanel items={gameState.inventory} />
           </div>
         </div>
-
       </div>
 
-      {/* Story Bible Viewer Modal */}
-      <StoryBibleViewer
-        isOpen={isBibleOpen}
-        onClose={() => setIsBibleOpen(false)}
-        bible={gameState.storyBible}
+      <CaseFile
+        isOpen={isCaseOpen}
+        onClose={() => setIsCaseOpen(false)}
+        state={gameState}
+        onInternalize={(id) => {
+          setGameState((prev) => internalizeThought(prev, id));
+          showToast('念头住进来了。时间少了二十分钟。');
+        }}
+        onSpendPoint={(skill: SkillId) => setGameState((prev) => spendSkillPoint(prev, skill))}
       />
+
+      <SkillCheckModal
+        open={!!pendingCheck}
+        label={pendingCheck?.interaction.label || ''}
+        result={pendingCheck?.result || null}
+        rolling={pendingCheck?.rolling || false}
+        onFinished={finishPendingCheck}
+      />
+
+      <RunEndScreen state={gameState} onAgain={handleReset} />
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-stone-900 text-[#f4f1ea] px-4 py-2 font-typewriter text-xs uppercase tracking-widest shadow-lg">
+          {toast}
+        </div>
+      )}
     </div>
   );
 };
