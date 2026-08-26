@@ -1,5 +1,5 @@
 import React from 'react';
-import { knightBaseGeo } from './modelKit';
+import { knightBaseGeo } from './geometries';
 
 const ChessKnight: React.FC<{ color?: string }> = ({ color = '#d4b06a' }) => (
   <group>

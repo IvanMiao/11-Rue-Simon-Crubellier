@@ -27,6 +27,10 @@ const Person: React.FC<{
         <sphereGeometry args={[0.05, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.55]} />
         <meshStandardMaterial color={hair} roughness={0.8} />
       </mesh>
+      <mesh position={[0, sitting ? 0.56 : 0.6, 0]} castShadow>
+        <cylinderGeometry args={[0.02, 0.055, 0.04, 10]} />
+        <meshStandardMaterial color={coat} roughness={0.6} />
+      </mesh>
       <mesh position={[0.016, sitting ? 0.478 : 0.518, 0.04]}>
         <sphereGeometry args={[0.006, 6, 6]} />
         <meshStandardMaterial color="#1a120c" />

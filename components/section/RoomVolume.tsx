@@ -157,7 +157,7 @@ const RoomVolume: React.FC<RoomVolumeProps> = ({
       {isElevator && <ElevatorCage w={w} h={h} d={d} selected={selected} />}
       {isStair && lit && <StairFlight h={h} />}
 
-      <group position={[0, -h / 2 + 0.02, 0.04]} scale={Math.min(1, w * 0.82, h * 0.85)}>
+      <group position={[0, -h / 2 + 0.02, 0.04]} scale={Math.min(1.2, w * 0.95, h * 0.95)}>
         {!isElevator && !isStair && lit && look.occupied && set !== 'empty' && (
           <>
             <OrientalRug hex="#6a2a28" accent={look.lamp} w={w} d={d} />

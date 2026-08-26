@@ -21,7 +21,7 @@ import {
 } from '../../utils/canvasTextures';
 import RoomVolume from './RoomVolume';
 import { prefersReducedMotion } from '../../utils/motion';
-import { lampStemGeo, lampShadeGeo } from './modelKit';
+import { lampShadeGeo, lampStemGeo } from './geometries';
 
 interface BuildingCanvasProps {
   onRoomSelect: (room: RoomData) => void;
@@ -32,17 +32,31 @@ interface BuildingCanvasProps {
   onBlocked?: (room: RoomData) => void;
 }
 
+function DollhouseFrame() {
+  const wood = useMemo(() => woodTexture(), []);
+  return (
+    <group>
+      {Array.from({ length: 11 }).map((_, i) => (
+        <mesh key={i} position={[0, i * CELL_H - 0.015, -0.62]} receiveShadow>
+          <boxGeometry args={[CELL_W * 10.12, 0.05, 1.78]} />
+          <meshStandardMaterial map={wood} color="#4a3220" roughness={0.68} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function GazeRig({ focusY }: { focusY: number }) {
   const { camera, pointer } = useThree();
   const reduced = prefersReducedMotion();
   useFrame(() => {
-    const targetX = reduced ? 3.6 : 3.6 + pointer.x * 1.5;
-    const targetY = reduced ? 5.2 : 4.7 + focusY * 0.12 + pointer.y * 0.55;
-    const targetZ = 13.6;
+    const targetX = reduced ? 4.1 : 4.1 + pointer.x * 1.35;
+    const targetY = reduced ? 5.0 : 4.55 + focusY * 0.14 + pointer.y * 0.5;
+    const targetZ = 11.8;
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetX, 0.045);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetY, 0.045);
     camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetZ, 0.045);
-    camera.lookAt(0, 4.7 + focusY * 0.05, -0.35);
+    camera.lookAt(0, 4.55 + focusY * 0.06, -0.2);
   });
   return null;
 }
@@ -297,23 +311,26 @@ const BuildingCanvas: React.FC<BuildingCanvasProps> = ({
     <Canvas
       shadows
       dpr={[1, 1.6]}
-      camera={{ position: [3.6, 5.2, 13.6], fov: 30, near: 0.1, far: 80 }}
-      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.08 }}
+      camera={{ position: [4.1, 5.0, 11.8], fov: 32, near: 0.1, far: 80 }}
+      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.18 }}
+      onCreated={({ gl }) => {
+        gl.shadowMap.type = THREE.PCFShadowMap;
+      }}
       style={{ width: '100%', height: '100%', display: 'block' }}
     >
       <color attach="background" args={['#141218']} />
       <fog attach="fog" args={['#1a1716', 16, 34]} />
       <Suspense fallback={null}>
-        <hemisphereLight args={['#8aa0c0', '#c47848', 0.48]} />
+        <hemisphereLight args={['#9ab0cc', '#c47848', 0.62]} />
         <directionalLight
           position={[7, 11, 7]}
-          intensity={1.05}
+          intensity={1.25}
           color="#f4d8b0"
           castShadow
           shadow-mapSize-width={1024}
           shadow-mapSize-height={1024}
         />
-        <directionalLight position={[-6, 3, 3]} intensity={0.4} color="#6a88c4" />
+        <directionalLight position={[-6, 3, 3]} intensity={0.5} color="#6a88c4" />
         <pointLight
           position={[focus?.x ?? 0, (focus?.y ?? 4) + 0.25, 0.45]}
           intensity={selectedRoomId ? 1.55 : 0.25}
@@ -324,6 +341,7 @@ const BuildingCanvas: React.FC<BuildingCanvasProps> = ({
         <Neighbors />
         <GazeRig focusY={focusY} />
         <Shell />
+        <DollhouseFrame />
         <BuildingModel
           boxes={boxes}
           selectedRoomId={selectedRoomId}
