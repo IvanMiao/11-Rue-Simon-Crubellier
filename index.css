@@ -147,16 +147,44 @@ body {
 
 /* ——— Building section ——— */
 
-.section-sheet {
+.section-stage {
   background:
-    linear-gradient(180deg, rgba(255, 250, 235, 0.35), transparent 80px),
-    repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 23px,
-      rgba(80, 60, 30, 0.05) 24px
-    ),
-    #d9cbb0;
+    radial-gradient(ellipse at 48% 12%, #3a4658 0%, #1a1714 55%, #100e0c 100%);
+  isolation: isolate;
+}
+.section-stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.07;
+  mix-blend-mode: overlay;
+  background-image: repeating-radial-gradient(circle at 18% 32%, #fff 0 0.5px, transparent 0.6px 3px);
+}
+
+.section-stage-label {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 2;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.7);
+}
+
+.section-stage-legend {
+  position: absolute;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: 'Courier Prime', monospace;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #9a8c78;
+  pointer-events: none;
+  z-index: 2;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
 }
 
 .section-title {

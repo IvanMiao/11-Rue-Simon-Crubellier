@@ -86,6 +86,19 @@ export function roomLook(room: RoomData): RoomLook {
   };
 }
 
+export type FurnishSet = 'salon' | 'bedroom' | 'atelier' | 'shop' | 'cave' | 'service' | 'empty';
+
+export function furnishSet(room: RoomData, silhouette: SilhouetteKind): FurnishSet {
+  if (room.type === 'basement') return 'cave';
+  if (room.type === 'elevator') return 'empty';
+  if (room.type === 'service') return 'service';
+  if (room.floor === 0 && room.type !== 'stairwell') return 'shop';
+  if (silhouette === 'sit') return 'salon';
+  if (silhouette === 'empty') return 'empty';
+  if (room.type === 'apartment' && room.floor >= 7) return 'atelier';
+  return silhouette === 'pair' ? 'salon' : 'bedroom';
+}
+
 export function stillLifeKind(name: string): StillKind {
   const n = name.toLowerCase();
   if (/邮票|stamp/.test(n)) return 'stamp';

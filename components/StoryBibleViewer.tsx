@@ -65,7 +65,10 @@ const StoryBibleViewer: React.FC<StoryBibleViewerProps> = ({ isOpen, onClose, bi
                                         {bible.plot_threads.map((thread, idx) => (
                                             <li key={idx} className="flex items-start gap-3">
                                                 <span className="font-typewriter text-stone-400 mt-1">#{idx + 1}</span>
-                                                <span className="font-serif text-lg text-stone-800">{thread}</span>
+                                                <span className="font-serif text-lg text-stone-800">
+                                                    <span className="block">{thread.title}</span>
+                                                    <span className="block text-sm text-stone-600 italic mt-1">{thread.summary}</span>
+                                                </span>
                                             </li>
                                         ))}
                                     </ul>

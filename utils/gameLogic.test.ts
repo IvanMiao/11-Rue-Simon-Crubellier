@@ -8,6 +8,7 @@ import { FALLBACK_BIBLE } from './fallbackContent';
 import { BUILDING_LAYOUT } from '../constants';
 import { roomsToPrefetch, skeletonForRoom, upgradeRoomContent } from './roomRuntime';
 import { floorLabel, stillLifeKind, roomLook } from './roomArt';
+import { layoutRooms } from './sectionLayout';
 
 function assert(cond: unknown, msg: string) {
   if (!cond) throw new Error(msg);
@@ -122,5 +123,16 @@ assert(stillLifeKind('一盘下到中盘的国际象棋') === 'chess', 'chess ic
 const hallLook = roomLook(hall);
 assert(hallLook.lamp.length > 0, 'hall has a lamp');
 assert(roomLook(hall).lamp === hallLook.lamp, 'room art is deterministic');
+
+const boxes = layoutRooms(false);
+const hallBox = boxes.find((b) => b.id === '0-5');
+assert(hallBox, 'hall is in 3d layout');
+const elevatorBox = boxes.find((b) => b.id === 'ELEVATOR');
+assert(elevatorBox && elevatorBox.h > hallBox!.h, 'elevator shaft is taller than the hall');
+const attic = boxes.filter((b) => b.room.floor === 8);
+const cellar = boxes.filter((b) => b.room.floor === -1);
+assert(attic[0].y > cellar[0].y, 'attic sits above the cellar');
+assert(!boxes.some((b) => b.room.floor === 100), 'hundredth floor hidden by default');
+assert(layoutRooms(true).some((b) => b.room.floor === 100), 'hundredth floor can appear');
 
 console.log('game logic checks passed');
