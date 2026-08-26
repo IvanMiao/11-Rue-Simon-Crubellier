@@ -45,7 +45,6 @@ import { newRunSeed } from './utils/rng';
 import { BUILDING_LAYOUT } from './constants';
 import { STORAGE_KEY } from './constants/skills';
 import { buildingAudio } from './services/audioEngine';
-import { prefersReducedMotion } from './utils/motion';
 import {
   moveKindForPrefetch,
   roomsToPrefetch,
@@ -163,7 +162,7 @@ const App: React.FC = () => {
     });
     try {
       const bible = await generateStoryBible(seed, character);
-      const minMs = prefersReducedMotion() ? 400 : 3400;
+      const minMs = 3200;
       const wait = minMs - (Date.now() - startedAt);
       if (wait > 0) {
         await new Promise((resolve) => window.setTimeout(resolve, wait));
