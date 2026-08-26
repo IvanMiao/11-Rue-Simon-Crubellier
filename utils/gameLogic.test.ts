@@ -7,6 +7,7 @@ import { DEFAULT_SKILLS } from '../constants/skills';
 import { FALLBACK_BIBLE } from './fallbackContent';
 import { BUILDING_LAYOUT } from '../constants';
 import { roomsToPrefetch, skeletonForRoom, upgradeRoomContent } from './roomRuntime';
+import { floorLabel, stillLifeKind, roomLook } from './roomArt';
 
 function assert(cond: unknown, msg: string) {
   if (!cond) throw new Error(msg);
@@ -112,5 +113,14 @@ const prefetch = roomsToPrefetch(reachable, '0-5', { '0-5': skeleton });
 assert(!prefetch.includes('0-5'), 'do not prefetch current');
 assert(prefetch.length > 0, 'neighbors queued');
 assert(prefetch.length <= 6, 'prefetch cap');
+
+assert(floorLabel(0) === 'RC', 'rez-de-chaussée');
+assert(floorLabel(-1) === 'SS', 'sous-sol');
+assert(floorLabel(8) === '8e', 'attic floor');
+assert(stillLifeKind('一枚缺角的邮票') === 'stamp', 'stamp icon');
+assert(stillLifeKind('一盘下到中盘的国际象棋') === 'chess', 'chess icon');
+const hallLook = roomLook(hall);
+assert(hallLook.lamp.length > 0, 'hall has a lamp');
+assert(roomLook(hall).lamp === hallLook.lamp, 'room art is deterministic');
 
 console.log('game logic checks passed');

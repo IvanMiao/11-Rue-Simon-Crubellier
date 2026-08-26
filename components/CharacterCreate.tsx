@@ -82,7 +82,7 @@ const CharacterCreate: React.FC<CharacterCreateProps> = ({ onBegin }) => {
         <p className="create-block font-typewriter text-xs tracking-[0.35em] uppercase text-stone-500 mb-3">
           Run zero · 西蒙-克吕贝里埃街 11 号
         </p>
-        <h1 className="create-block font-serif text-4xl md:text-6xl font-bold mb-3">你是谁，在二十点整走进楼里？</h1>
+        <h1 className="create-block font-display text-4xl md:text-6xl font-bold mb-3">你是谁，在二十点整走进楼里？</h1>
         <p className="create-block font-serif text-lg text-stone-600 max-w-2xl leading-relaxed mb-10">
           这不是一次参观。每一局会重新编织住户的秘密。你带着八种互相顶嘴的能力，以及一盘只能走骑士跳的棋。午夜一到，时间恢复流动。
         </p>

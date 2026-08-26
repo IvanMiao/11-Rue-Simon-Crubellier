@@ -386,7 +386,7 @@ const App: React.FC = () => {
   }, [gameState, selectedRoom]);
 
   if (!isHydrated) {
-    return <div className="h-screen w-screen bg-[#eae7dc]" />;
+    return <div className="h-screen w-screen bg-[#241e18]" />;
   }
 
   if (gameState.runStatus === 'creating') {
@@ -398,7 +398,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-stone-50 text-stone-900">
+    <div className="desk-shell flex flex-col h-screen w-screen overflow-hidden text-stone-900">
       <div className="paper-grain" />
       <div className="vignette" />
       <HudBar
@@ -424,8 +424,8 @@ const App: React.FC = () => {
       <div className="flex flex-1 overflow-hidden relative">
         <div
           className={`
-          absolute inset-0 md:relative md:w-1/2 lg:w-5/12 xl:w-1/2 z-10
-          transition-transform duration-500 ease-in-out bg-[#eae7dc]
+          absolute inset-0 md:relative md:w-[52%] lg:w-[50%] xl:w-[52%] z-10
+          transition-transform duration-500 ease-in-out
           ${isMobileMapOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
         >
@@ -442,7 +442,7 @@ const App: React.FC = () => {
 
         <div
           className={`
-            absolute inset-0 md:relative md:w-1/2 lg:w-7/12 xl:w-1/2 z-0 bg-[#fdfbf7]
+            absolute inset-0 md:relative md:w-[48%] lg:w-[50%] xl:w-[48%] z-0
             transition-transform duration-500 ease-in-out flex flex-col
             ${!isMobileMapOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
           `}
@@ -456,6 +456,7 @@ const App: React.FC = () => {
               onInteract={handleInteract}
               onCollectItem={handleCollectItem}
               disabledChecks={disabledChecks}
+              lastMoveKind={gameState.lastMoveKind}
             />
           </div>
           <div className="z-20 shrink-0">

@@ -86,7 +86,7 @@ const SkillCheckModal: React.FC<SkillCheckModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 check-veil p-4">
       <div
         ref={cardRef}
-        className="bg-[#f4f1ea] w-full max-w-md border-4 border-stone-800 shadow-2xl p-8 text-center"
+        className="check-modal w-full max-w-md shadow-2xl p-8 text-center"
       >
         <div className="font-typewriter text-[10px] tracking-[0.35em] uppercase text-stone-500 mb-2">
           {result.kind === 'red' ? '红色检定 · 仅一次' : '白色检定 · 可再试'}
@@ -103,7 +103,7 @@ const SkillCheckModal: React.FC<SkillCheckModalProps> = ({
           {[shown1, shown2].map((d, i) => (
             <div
               key={i}
-              className={`die-face w-16 h-16 bg-white border-2 border-stone-800 flex items-center justify-center font-typewriter text-3xl shadow-[4px_4px_0_0_rgba(28,25,23,1)] ${
+              className={`die-face w-16 h-16 border-2 border-stone-800 flex items-center justify-center font-typewriter text-3xl shadow-[4px_4px_0_0_rgba(28,25,23,1)] ${
                 !rolling ? 'is-settling' : ''
               }`}
             >

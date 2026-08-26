@@ -2,6 +2,8 @@ import React from 'react';
 import { RoomData } from '../types';
 import { BUILDING_LAYOUT } from '../constants';
 import { ReachableMap } from '../utils/gridLogic';
+import { floorLabel, roomLook } from '../utils/roomArt';
+import KnightGlyph from './KnightGlyph';
 
 interface BuildingMapProps {
   onRoomSelect: (room: RoomData) => void;
@@ -23,7 +25,6 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
   onBlocked,
 }) => {
   const floors = [8, 7, 6, 5, 4, 3, 2, 1, 0, -1];
-
   if (puzzlePiecesCollected >= 5 || reachable.all.has('100-1')) {
     floors.unshift(100);
   }
@@ -31,108 +32,119 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
   const getRoomsOnFloor = (floor: number) => BUILDING_LAYOUT.filter((r) => r.floor === floor);
 
   return (
-    <div className="w-full h-full overflow-y-auto p-2 md:p-6 bg-[#eae7dc] border-r border-stone-300 shadow-inner flex flex-col items-center">
-      <h2 className="font-serif text-xl mb-2 tracking-widest text-stone-800 font-bold uppercase">
-        11 Rue Simon-Crubellier
-      </h2>
-      <p className="font-typewriter text-[10px] text-stone-500 mb-4 uppercase tracking-widest">
-        剖面 · 走廊相邻 · 骑士跳 · 电梯井
+    <div className="section-sheet w-full h-full overflow-y-auto p-3 md:p-6 border-r border-[#c4b49a] flex flex-col items-center">
+      <p className="font-typewriter text-[10px] text-[#6a5e4e] tracking-[0.35em] uppercase mb-1">
+        Coupe · 11, rue Simon-Crubellier
+      </p>
+      <h2 className="section-title text-2xl md:text-3xl mb-1 text-[#2a2218] uppercase">剖面</h2>
+      <p className="font-typewriter text-[10px] text-[#8a7c6a] mb-4 tracking-[0.22em] uppercase">
+        二十点整 · 人已冻结 · 只有视线在走
       </p>
 
-      <div className="grid grid-cols-10 auto-rows-[60px] gap-0.5 p-2 bg-stone-800 border-4 border-stone-800 w-full max-w-3xl shadow-2xl">
-        {floors.map((floorNum) => (
-          <React.Fragment key={floorNum}>
-            {getRoomsOnFloor(floorNum).map((room) => {
-              const isSelected = selectedRoomId === room.id;
-              const isVisited = visitedRoomIds.has(room.id);
-              const isElevator = room.type === 'elevator';
-              const isKnight = reachable.knight.has(room.id);
-              const isWalk = reachable.walk.has(room.id);
-              const isLift = reachable.elevator.has(room.id);
-              const isReachable = reachable.all.has(room.id) || isSelected;
-              const showLamp = isVisited || isSelected || isReachable;
+      <div className="section-stack w-full max-w-[52rem]">
+        <div className="section-roof ml-[2.4rem]">
+          <span className="section-chimney" style={{ left: '18%' }} />
+          <span className="section-chimney" style={{ left: '38%' }} />
+          <span className="section-chimney" style={{ left: '62%' }} />
+          <span className="section-chimney" style={{ left: '78%' }} />
+        </div>
 
-              return (
-                <button
-                  key={room.id}
-                  onClick={() => {
-                    if (isSelected) return;
-                    if (isReachable) onRoomSelect(room);
-                    else onBlocked?.(room);
-                  }}
-                  style={{
-                    gridColumn: `span ${room.colSpan || 1}`,
-                    gridRow: `span ${room.rowSpan || 1}`,
-                  }}
-                  className={`
-                     relative group flex flex-col items-center justify-center 
-                     transition-all duration-300 ease-out border border-stone-400/30
-                     ${
-                       isSelected
-                         ? 'bg-stone-800 text-white z-20 scale-105 shadow-[0_0_15px_rgba(0,0,0,0.5)] border-stone-500'
-                         : isElevator && isReachable
-                           ? 'bg-stone-900 text-amber-200 border-amber-700 z-10'
-                           : isKnight
-                             ? 'knight-cell bg-[#e8e4d0] text-stone-900 border-amber-400'
-                             : isLift
-                               ? 'bg-[#ddd6c4] text-stone-800 border-stone-500'
-                               : isWalk
-                                 ? 'bg-[#efe8d4] text-stone-800'
-                                 : isVisited
-                                   ? 'bg-[#dcd6c6] text-stone-500'
-                                   : 'bg-[#f4f1ea] text-stone-300'
-                     }
-                     ${!isReachable && !isSelected ? 'cursor-not-allowed opacity-70' : ''}
-                     ${isSelected && lastMoveKind === 'knight' ? 'ring-2 ring-amber-400' : ''}
-                   `}
-                >
-                  {showLamp && (
-                    <span className={`room-lamp ${room.type}`} aria-hidden />
-                  )}
-                  <span
-                    className={`
-                     font-typewriter font-bold uppercase leading-none text-center px-1
-                     ${room.colSpan && room.colSpan < 2 ? 'text-[0.5rem]' : 'text-[0.6rem] md:text-[0.7rem]'}
-                   `}
-                  >
-                    {room.name}
-                  </span>
+        <div className="section-frame">
+          <aside className="floor-rail" aria-hidden>
+            {floors.map((floor) => (
+              <span key={floor}>{floorLabel(floor)}</span>
+            ))}
+          </aside>
 
-                  {isSelected && (
-                    <span className="you-are-here font-typewriter">
-                      {lastMoveKind === 'knight' ? '♞' : lastMoveKind === 'elevator' ? '↕' : '●'}
-                    </span>
-                  )}
-                  {isVisited && !isSelected && (
-                    <span className="absolute bottom-1 w-1 h-1 rounded-full bg-stone-400"></span>
-                  )}
-                  {isKnight && !isSelected && (
-                    <span className="absolute top-1 right-1 text-[8px] text-amber-700 font-typewriter">♞</span>
-                  )}
-                </button>
-              );
-            })}
-          </React.Fragment>
-        ))}
+          <div className="min-w-0 flex-1">
+            <div className="section-grid">
+              <div className="section-pipes" />
+              {floors.map((floorNum) => (
+                <React.Fragment key={floorNum}>
+                  {getRoomsOnFloor(floorNum).map((room) => {
+                    const isSelected = selectedRoomId === room.id;
+                    const isVisited = visitedRoomIds.has(room.id);
+                    const isElevator = room.type === 'elevator';
+                    const isKnight = reachable.knight.has(room.id);
+                    const isWalk = reachable.walk.has(room.id);
+                    const isLift = reachable.elevator.has(room.id);
+                    const isReachable = reachable.all.has(room.id) || isSelected;
+                    const look = roomLook(room);
+                    const showLife = isVisited || isSelected || isReachable;
+                    const silClass = isSelected
+                      ? 'investigator'
+                      : showLife
+                        ? look.silhouette
+                        : 'empty';
+
+                    return (
+                      <button
+                        key={room.id}
+                        onClick={() => {
+                          if (isSelected) return;
+                          if (isReachable) onRoomSelect(room);
+                          else onBlocked?.(room);
+                        }}
+                        style={{
+                          gridColumn: `span ${room.colSpan || 1}`,
+                          gridRow: `span ${room.rowSpan || 1}`,
+                          ['--lamp' as string]: look.lamp,
+                          ['--paint' as string]: look.paint,
+                        }}
+                        className={[
+                          'room-cell',
+                          isElevator ? 'is-elevator' : '',
+                          room.type === 'basement' ? 'is-basement' : '',
+                          isSelected ? 'is-selected' : '',
+                          isWalk ? 'is-walk' : '',
+                          !isReachable && !isSelected ? 'is-blocked' : '',
+                        ].join(' ')}
+                      >
+                        {showLife && <span className={`room-window ${look.window}`} />}
+                        {showLife && look.occupied && (
+                          <span className={`room-silhouette ${silClass}`} />
+                        )}
+                        {isKnight && !isSelected && <KnightGlyph className="room-knight" />}
+                        <span
+                          className="room-plate"
+                          style={{
+                            fontSize: room.colSpan && room.colSpan < 2 ? '0.48rem' : undefined,
+                          }}
+                        >
+                          {room.name}
+                        </span>
+                        {isSelected && (
+                          <span className="room-gaze">
+                            {lastMoveKind === 'knight'
+                              ? '♞'
+                              : lastMoveKind === 'elevator'
+                                ? '↕'
+                                : '●'}
+                          </span>
+                        )}
+                        {isLift && !isSelected && !isElevator && (
+                          <span className="room-gaze" style={{ color: '#8a7c6a' }}>
+                            ↕
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
+            </div>
+            <div className="section-street">Rue Simon-Crubellier · 20h00</div>
+          </div>
+        </div>
       </div>
 
-      <div className="mt-8 text-center max-w-md">
-        <p className="font-typewriter text-xs text-stone-500 italic mb-2">
-          「整栋楼是一道有限的棋题。」
-        </p>
-        <div className="flex flex-wrap justify-center gap-3 text-[10px] font-typewriter text-stone-400 uppercase">
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-[#efe8d4] border border-stone-300"></div> 走廊
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-[#e8e4d0] border border-amber-400"></div> 骑士跳
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-stone-800 border border-stone-300"></div> 当前位置
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-[#f4f1ea] border border-stone-300 opacity-70"></div> 走不到
-          </div>
+      <div className="section-legend mt-8 text-center max-w-md">
+        <p className="font-serif italic text-sm mb-3">「整栋楼是一道有限的棋题。」</p>
+        <div className="flex flex-wrap justify-center gap-4 text-[10px] font-typewriter uppercase tracking-widest">
+          <span>窗亮 = 可走</span>
+          <span>♞ = 骑士跳</span>
+          <span>黄边 = 你的视线</span>
+          <span>窗帘落下 = 走不到</span>
         </div>
       </div>
     </div>

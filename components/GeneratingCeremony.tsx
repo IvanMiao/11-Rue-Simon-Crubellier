@@ -59,12 +59,12 @@ const GeneratingCeremony: React.FC<GeneratingCeremonyProps> = ({ seed, character
   return (
     <div
       ref={rootRef}
-      className="h-screen w-screen flex flex-col items-center justify-center bg-[#eae7dc] text-stone-800 px-6"
+      className="h-screen w-screen flex flex-col items-center justify-center text-stone-800 px-6 section-sheet"
     >
       <p className="ceremony-kicker font-typewriter text-[10px] tracking-[0.4em] uppercase text-stone-500 mb-4">
         {character?.archetype || '列举者'} · 二十点整
       </p>
-      <h2 className="ceremony-title font-serif text-3xl md:text-4xl font-bold mb-3 text-center">
+        <h2 className="ceremony-title font-display text-3xl md:text-4xl font-bold mb-3 text-center">
         为这一局编织圣经
       </h2>
       <p className="ceremony-seed font-typewriter text-xs text-stone-500 mb-10 tracking-[0.25em]">
