@@ -45,6 +45,7 @@ import { newRunSeed } from './utils/rng';
 import { BUILDING_LAYOUT } from './constants';
 import { STORAGE_KEY } from './constants/skills';
 import { buildingAudio } from './services/audioEngine';
+import { prefersReducedMotion } from './utils/motion';
 import {
   moveKindForPrefetch,
   roomsToPrefetch,
@@ -153,6 +154,7 @@ const App: React.FC = () => {
     const seed = newRunSeed();
     prefetchRef.current = {};
     prefetchingRef.current = new Set();
+    const startedAt = Date.now();
     setGameState({
       ...INITIAL_PLAYER_STATE,
       runStatus: 'generating',
@@ -161,6 +163,11 @@ const App: React.FC = () => {
     });
     try {
       const bible = await generateStoryBible(seed, character);
+      const minMs = prefersReducedMotion() ? 400 : 3400;
+      const wait = minMs - (Date.now() - startedAt);
+      if (wait > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, wait));
+      }
       const started = beginRun(character, seed, bible);
       setGameState(started);
       const hall = BUILDING_LAYOUT.find((r) => r.id === '0-5') || null;
