@@ -33,16 +33,16 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
 
   return (
     <div className="section-sheet w-full h-full overflow-y-auto p-3 md:p-6 border-r border-[#c4b49a] flex flex-col items-center">
-      <p className="font-typewriter text-[10px] text-[#6a5e4e] tracking-[0.35em] uppercase mb-1">
+      <p className="font-typewriter text-[10px] text-[#6a5e4e] tracking-[0.35em] uppercase mb-0.5">
         Coupe · 11, rue Simon-Crubellier
       </p>
-      <h2 className="section-title text-2xl md:text-3xl mb-1 text-[#2a2218] uppercase">剖面</h2>
-      <p className="font-typewriter text-[10px] text-[#8a7c6a] mb-4 tracking-[0.22em] uppercase">
+      <h2 className="section-title text-xl md:text-2xl mb-0.5 text-[#2a2218] uppercase">剖面</h2>
+      <p className="font-typewriter text-[10px] text-[#8a7c6a] mb-3 tracking-[0.22em] uppercase">
         二十点整 · 人已冻结 · 只有视线在走
       </p>
 
       <div className="section-stack w-full max-w-[52rem]">
-        <div className="section-roof ml-[2.4rem]">
+        <div className="section-roof ml-[2.75rem]">
           <span className="section-chimney" style={{ left: '18%' }} />
           <span className="section-chimney" style={{ left: '38%' }} />
           <span className="section-chimney" style={{ left: '62%' }} />
@@ -97,6 +97,7 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
                           room.type === 'basement' ? 'is-basement' : '',
                           isSelected ? 'is-selected' : '',
                           isWalk ? 'is-walk' : '',
+                          isKnight ? 'is-knight' : '',
                           !isReachable && !isSelected ? 'is-blocked' : '',
                         ].join(' ')}
                       >
@@ -104,7 +105,18 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
                         {showLife && look.occupied && (
                           <span className={`room-silhouette ${silClass}`} />
                         )}
-                        {isKnight && !isSelected && <KnightGlyph className="room-knight" />}
+                        {showLife && look.occupied && look.silhouette !== 'empty' && (
+                          <span
+                            className={`room-furnish ${
+                              look.silhouette === 'sit' ? 'bed' : look.silhouette === 'pair' ? 'table' : ''
+                            }`}
+                          />
+                        )}
+                        {isKnight && !isSelected && (
+                          <span className="room-knight" aria-hidden>
+                            ♘
+                          </span>
+                        )}
                         <span
                           className="room-plate"
                           style={{
@@ -138,13 +150,15 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
         </div>
       </div>
 
-      <div className="section-legend mt-8 text-center max-w-md">
-        <p className="font-serif italic text-sm mb-3">「整栋楼是一道有限的棋题。」</p>
-        <div className="flex flex-wrap justify-center gap-4 text-[10px] font-typewriter uppercase tracking-widest">
+      <div className="section-legend mt-5 text-center max-w-md">
+        <p className="font-serif italic text-sm mb-2">「整栋楼是一道有限的棋题。」</p>
+        <div className="flex flex-wrap justify-center gap-4 text-[10px] font-typewriter uppercase tracking-widest items-center">
           <span>窗亮 = 可走</span>
-          <span>♞ = 骑士跳</span>
+          <span className="inline-flex items-center gap-1">
+            <KnightGlyph className="w-3.5 h-3.5" /> 骑士跳
+          </span>
           <span>黄边 = 你的视线</span>
-          <span>窗帘落下 = 走不到</span>
+          <span>暗窗 = 走不到</span>
         </div>
       </div>
     </div>

@@ -13,7 +13,7 @@
   --street: #3a342c;
   --slab: #5a5246;
   --lamp: #e8b14a;
-  --room-h: 72px;
+  --room-h: 58px;
 }
 
 html,
@@ -174,7 +174,7 @@ body {
 .floor-rail {
   display: flex;
   flex-direction: column;
-  width: 2.4rem;
+  width: 2.75rem;
   flex-shrink: 0;
   padding-top: 8px;
   padding-bottom: 8px;
@@ -184,12 +184,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding-right: 0.4rem;
+  padding-right: 0.45rem;
   height: var(--room-h);
   font-family: 'Courier Prime', monospace;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  color: #6a5e4e;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #3a3228;
 }
 
 .section-stack {
@@ -198,20 +198,20 @@ body {
 }
 
 .section-roof {
-  height: 34px;
+  height: 28px;
   background:
-    linear-gradient(180deg, #3a3228 0%, var(--roof) 100%);
+    linear-gradient(180deg, #5a4a38 0%, var(--roof) 100%);
   position: relative;
-  clip-path: polygon(4% 100%, 10% 28%, 90% 28%, 96% 100%);
+  clip-path: polygon(4% 100%, 10% 18%, 90% 18%, 96% 100%);
 }
 
 .section-chimney {
   position: absolute;
-  bottom: 18px;
-  width: 8px;
-  height: 16px;
-  background: #4a4034;
-  box-shadow: inset 0 0 0 1px #2a241c;
+  bottom: 16px;
+  width: 9px;
+  height: 22px;
+  background: #6a5a48;
+  box-shadow: inset 0 0 0 1px #2a241c, 0 -2px 0 #3a3228;
 }
 
 .section-grid {
@@ -249,16 +249,16 @@ body {
 }
 
 .section-street {
-  height: 38px;
+  height: 32px;
   background:
     linear-gradient(180deg, #4a4338 0%, var(--street) 40%, #2a241c 100%);
-  color: #d4c4a8;
+  color: #e8dcc8;
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: 'Courier Prime', monospace;
-  font-size: 10px;
-  letter-spacing: 0.38em;
+  font-size: 11px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   border: 8px solid var(--facade);
   border-top: 0;
@@ -349,15 +349,16 @@ body {
 
 .room-window {
   position: absolute;
-  top: 10%;
-  right: 10%;
-  width: 30%;
-  min-width: 14px;
-  height: 38%;
+  top: 8%;
+  right: 8%;
+  width: 38%;
+  min-width: 16px;
+  height: 48%;
   background: var(--lamp, #e8b14a);
   box-shadow:
-    0 0 10px var(--lamp, #e8b14a),
-    inset 0 0 0 1px rgba(20, 12, 8, 0.35);
+    0 0 16px var(--lamp, #e8b14a),
+    0 0 4px #fff6c8,
+    inset 0 0 0 1px rgba(20, 12, 8, 0.4);
   animation: lamp-breathe 4.2s ease-in-out infinite;
   z-index: 1;
 }
@@ -481,14 +482,53 @@ body {
 
 .room-knight {
   position: absolute;
-  top: 6%;
-  left: 8%;
-  width: 16px;
-  height: 16px;
-  color: #5a3e10;
-  z-index: 2;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #f0d78c;
+  color: #3a2410;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
   animation: knight-idle 2.8s ease-in-out infinite;
-  filter: drop-shadow(0 1px 0 rgba(255, 230, 180, 0.4));
+  box-shadow: 0 0 0 1px #5a3e10, 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.room-cell.is-knight:not(.is-selected) {
+  background-image:
+    linear-gradient(45deg, rgba(90, 62, 16, 0.07) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(90, 62, 16, 0.07) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(90, 62, 16, 0.07) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(90, 62, 16, 0.07) 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0;
+}
+
+.room-furnish {
+  position: absolute;
+  left: 14%;
+  bottom: 16px;
+  width: 32%;
+  height: 9px;
+  background: #4a3c2c;
+  opacity: 0.32;
+  z-index: 1;
+}
+
+.room-furnish.bed {
+  width: 40%;
+  height: 12px;
+}
+
+.room-furnish.table {
+  width: 22%;
+  height: 14px;
+  border-radius: 1px 1px 0 0;
 }
 
 .room-cell.is-selected .room-knight {
@@ -807,9 +847,9 @@ body {
   border: 4px solid #2a2218;
 }
 
-@media (max-width: 768px) {
+  @media (max-width: 768px) {
   :root {
-    --room-h: 56px;
+    --room-h: 48px;
   }
   .folio-bind {
     width: 8px;
