@@ -25,6 +25,7 @@ import {
   StoryPlotThread,
   Thought,
 } from '../types';
+import { upgradeRoomContent } from './roomRuntime';
 
 export const INITIAL_PLAYER_STATE: PlayerState = {
   version: 3,
@@ -143,7 +144,8 @@ export function skillValue(state: PlayerState, skill: SkillId): number {
 }
 
 export function cacheRoom(state: PlayerState, roomId: string, content: NarrativeResponse): PlayerState {
-  const isNew = !state.visitedRooms[roomId];
+  const previous = state.visitedRooms[roomId];
+  const isNew = !previous;
   let next = {
     ...state,
     visitedRooms: {
@@ -154,16 +156,47 @@ export function cacheRoom(state: PlayerState, roomId: string, content: Narrative
   };
   if (isNew) next = grantXp(next, 1);
 
-  if (content.plot_updates?.length) {
+  if (isNew && content.plot_updates?.length) {
     next = applyPlotUpdates(next, content.plot_updates);
   }
-  if (content.offered_thought) {
+  if (isNew && content.offered_thought) {
     const exists = next.thoughts.some((t) => t.id === content.offered_thought!.id);
     if (!exists) {
       next = {
         ...next,
         thoughts: [...next.thoughts, { ...content.offered_thought, internalized: false }],
       };
+    }
+  }
+  return next;
+}
+
+export function upgradeRoom(state: PlayerState, roomId: string, authored: NarrativeResponse): PlayerState {
+  const previous = state.visitedRooms[roomId];
+  const incoming: NarrativeResponse = { ...authored, source: 'authored' };
+  if (!previous) return cacheRoom(state, roomId, incoming);
+
+  const merged = upgradeRoomContent(previous, incoming);
+  let next: PlayerState = {
+    ...state,
+    visitedRooms: {
+      ...state.visitedRooms,
+      [roomId]: merged,
+    },
+  };
+
+  if (previous.source === 'skeleton') {
+    if (merged.plot_updates?.length) {
+      next = applyPlotUpdates(next, merged.plot_updates);
+    }
+    if (merged.offered_thought) {
+      const exists = next.thoughts.some((t) => t.id === merged.offered_thought!.id);
+      if (!exists) {
+        next = {
+          ...next,
+          thoughts: [...next.thoughts, { ...merged.offered_thought, internalized: false }],
+        };
+      }
     }
   }
   return next;

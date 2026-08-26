@@ -1,67 +1,68 @@
 import React, { useState } from 'react';
 import { InventoryItem } from '../types';
+import StillLifeMark from './StillLifeMark';
+import { stillLifeKind } from '../utils/roomArt';
 
 interface InventoryPanelProps {
-    items: InventoryItem[];
-    onUseItem?: (item: InventoryItem) => void;
+  items: InventoryItem[];
+  onUseItem?: (item: InventoryItem) => void;
 }
 
 const InventoryPanel: React.FC<InventoryPanelProps> = ({ items, onUseItem }) => {
-    const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
 
-    return (
-        <div className="border-t border-stone-300 bg-[#f4f1ea] transition-all duration-300 ease-in-out shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-             {/* Header - always visible, acts as toggle */}
-            <div
-                onClick={() => setIsOpen(!isOpen)}
-                className="p-4 cursor-pointer flex items-center justify-between hover:bg-[#ece8df] select-none group"
-            >
-                <div className="flex items-center gap-2">
-                    <h3 className="font-serif font-bold text-sm uppercase tracking-widest text-stone-800 group-hover:text-stone-600 transition-colors">
-                        物品栏
-                    </h3>
-                    {items.length > 0 && (
-                        <span className="bg-stone-800 text-white text-[10px] px-1.5 rounded-sm font-typewriter">
-                            {items.length}
-                        </span>
-                    )}
-                </div>
-                <span className="text-stone-400 text-[10px] font-typewriter uppercase tracking-widest group-hover:text-stone-600">
-                    {isOpen ? 'Close [▼]' : 'Open [▲]'}
-                </span>
-            </div>
-
-            {/* Content - Collapsible */}
-            <div className={`overflow-hidden transition-all duration-500 ease-in-out ${isOpen ? 'max-h-96 opacity-100 pb-4' : 'max-h-0 opacity-0'}`}>
-                <div className="px-4">
-                    {items.length === 0 ? (
-                        <p className="text-xs font-typewriter text-stone-400 italic text-center py-2">口袋是空的。</p>
-                    ) : (
-                        <div className="grid grid-cols-2 gap-2">
-                            {items.map((item) => (
-                                <div
-                                    key={item.id}
-                                    className="p-2 border border-stone-300 bg-white hover:bg-stone-50 transition-colors cursor-pointer group"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        onUseItem && onUseItem(item);
-                                    }}
-                                    title={item.description}
-                                >
-                                    <div className="font-typewriter text-xs font-bold text-stone-800 group-hover:text-stone-600">
-                                        {item.name}
-                                    </div>
-                                    <div className="text-[10px] text-stone-500 truncate mt-1">
-                                        {item.description}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
+  return (
+    <div className="drawer transition-all duration-300">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full p-3.5 cursor-pointer flex items-center justify-between hover:bg-[#dfd2b6] select-none"
+      >
+        <div className="flex items-center gap-2">
+          <h3 className="font-display text-lg tracking-wide text-[#2a2218]">口袋</h3>
+          {items.length > 0 && (
+            <span className="bg-[#2a2218] text-[#f4ead6] text-[10px] px-1.5 font-typewriter">
+              {items.length}
+            </span>
+          )}
         </div>
-    );
+        <span className="text-[#8a7c6a] text-[10px] font-typewriter uppercase tracking-widest">
+          {isOpen ? '合上' : '拉开'}
+        </span>
+      </button>
+
+      <div className={`overflow-hidden transition-all duration-500 ${isOpen ? 'max-h-96 opacity-100 pb-4' : 'max-h-0 opacity-0'}`}>
+        <div className="px-4">
+          {items.length === 0 ? (
+            <p className="text-xs font-typewriter text-[#8a7c6a] italic text-center py-2">口袋是空的。</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {items.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className="pocket-card text-left"
+                  onClick={() => onUseItem && onUseItem(item)}
+                  title={item.description}
+                >
+                  <div className="flex items-start gap-2">
+                    <StillLifeMark
+                      kind={item.type === 'puzzle_piece' ? 'puzzle' : stillLifeKind(item.name)}
+                      className="w-5 h-5 mt-0.5 text-[#4a3e30] shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="font-serif text-sm text-[#2a2218] truncate">{item.name}</div>
+                      <div className="text-[10px] text-[#8a7c6a] truncate mt-0.5">{item.description}</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 export default InventoryPanel;

@@ -90,6 +90,9 @@ export interface NarrativeResponse {
   offered_thought?: ThoughtSeed;
   journal?: string[];
   consumed_interaction_ids?: string[];
+  /** skeleton = local atoms shown instantly; authored = LLM or finalized fallback */
+  source?: 'skeleton' | 'authored';
+  collectible_taken?: boolean;
 }
 
 export enum GameState {
