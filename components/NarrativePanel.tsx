@@ -9,6 +9,8 @@ import {
 } from '../types';
 import { inspectItem } from '../services/geminiService';
 import { DIFFICULTY_LABEL, SKILL_META } from '../constants/skills';
+import TypewriterText from './TypewriterText';
+import { buildingAudio } from '../services/audioEngine';
 
 interface NarrativePanelProps {
   selectedRoom: RoomData | null;
@@ -60,6 +62,7 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
     if (scrollRef.current && !generating) {
       scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
+    if (selectedRoom) buildingAudio.page();
   }, [selectedRoom?.id, generating]);
 
   useEffect(() => {
@@ -91,6 +94,7 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
   const displayContent = cachedContent;
   const consumed = new Set(displayContent?.consumed_interaction_ids || []);
   const loading = generating && !displayContent;
+  const typesetting = generating && displayContent?.source === 'skeleton';
 
   return (
     <div
@@ -104,6 +108,10 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
             正在列举房间...
           </p>
         </div>
+      )}
+
+      {typesetting && (
+        <div className="prose-ribbon">正文正在从邻房的纸边翻过来</div>
       )}
 
       <div className={`transition-opacity duration-700 ${loading ? 'opacity-0' : 'opacity-100'}`}>
@@ -146,7 +154,11 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
             </div>
           ) : (
             <>
-              <div className="mb-8 whitespace-pre-wrap text-stone-800">{displayContent?.text}</div>
+              <TypewriterText
+                key={`${selectedRoom.id}:${displayContent?.source || 'none'}:${(displayContent?.text || '').slice(0, 24)}`}
+                text={displayContent?.text || ''}
+                className="mb-8 whitespace-pre-wrap text-stone-800"
+              />
 
               {displayContent?.npcs_present && displayContent.npcs_present.length > 0 && (
                 <div className="mb-6 font-typewriter text-xs uppercase tracking-widest text-stone-500">
@@ -181,7 +193,10 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
                         <button
                           key={id}
                           disabled={locked}
-                          onClick={() => onInteract({ ...action, id })}
+                          onClick={() => {
+                            buildingAudio.ui();
+                            onInteract({ ...action, id });
+                          }}
                           className="px-4 py-2 border border-stone-800 text-stone-800 font-typewriter text-xs uppercase hover:bg-stone-800 hover:text-white transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-stone-800"
                           title={
                             meta
@@ -269,7 +284,10 @@ const NarrativePanel: React.FC<NarrativePanelProps> = ({
                     <p className="font-serif italic text-lg">{displayContent.collectible_item.name}</p>
                   </div>
                   <button
-                    onClick={() => onCollectItem && onCollectItem(displayContent.collectible_item!)}
+                    onClick={() => {
+                      buildingAudio.collect();
+                      onCollectItem && onCollectItem(displayContent.collectible_item!);
+                    }}
                     className={`
                       px-4 py-2 text-white font-typewriter text-xs uppercase tracking-widest transition-colors
                       ${

@@ -9,6 +9,7 @@ interface BuildingMapProps {
   visitedRoomIds: Set<string>;
   reachable: ReachableMap;
   puzzlePiecesCollected: number;
+  lastMoveKind?: 'walk' | 'knight' | 'elevator';
   onBlocked?: (room: RoomData) => void;
 }
 
@@ -18,6 +19,7 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
   visitedRoomIds,
   reachable,
   puzzlePiecesCollected,
+  lastMoveKind,
   onBlocked,
 }) => {
   const floors = [8, 7, 6, 5, 4, 3, 2, 1, 0, -1];
@@ -34,7 +36,7 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
         11 Rue Simon-Crubellier
       </h2>
       <p className="font-typewriter text-[10px] text-stone-500 mb-4 uppercase tracking-widest">
-        走廊相邻 · 骑士跳 · 电梯井
+        剖面 · 走廊相邻 · 骑士跳 · 电梯井
       </p>
 
       <div className="grid grid-cols-10 auto-rows-[60px] gap-0.5 p-2 bg-stone-800 border-4 border-stone-800 w-full max-w-3xl shadow-2xl">
@@ -48,6 +50,7 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
               const isWalk = reachable.walk.has(room.id);
               const isLift = reachable.elevator.has(room.id);
               const isReachable = reachable.all.has(room.id) || isSelected;
+              const showLamp = isVisited || isSelected || isReachable;
 
               return (
                 <button
@@ -70,7 +73,7 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
                          : isElevator && isReachable
                            ? 'bg-stone-900 text-amber-200 border-amber-700 z-10'
                            : isKnight
-                             ? 'bg-[#e8e4d0] text-stone-900 border-amber-400 shadow-[inset_0_0_10px_rgba(255,215,0,0.25)]'
+                             ? 'knight-cell bg-[#e8e4d0] text-stone-900 border-amber-400'
                              : isLift
                                ? 'bg-[#ddd6c4] text-stone-800 border-stone-500'
                                : isWalk
@@ -80,8 +83,12 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
                                    : 'bg-[#f4f1ea] text-stone-300'
                      }
                      ${!isReachable && !isSelected ? 'cursor-not-allowed opacity-70' : ''}
+                     ${isSelected && lastMoveKind === 'knight' ? 'ring-2 ring-amber-400' : ''}
                    `}
                 >
+                  {showLamp && (
+                    <span className={`room-lamp ${room.type}`} aria-hidden />
+                  )}
                   <span
                     className={`
                      font-typewriter font-bold uppercase leading-none text-center px-1
@@ -91,6 +98,11 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
                     {room.name}
                   </span>
 
+                  {isSelected && (
+                    <span className="you-are-here font-typewriter">
+                      {lastMoveKind === 'knight' ? '♞' : lastMoveKind === 'elevator' ? '↕' : '●'}
+                    </span>
+                  )}
                   {isVisited && !isSelected && (
                     <span className="absolute bottom-1 w-1 h-1 rounded-full bg-stone-400"></span>
                   )}

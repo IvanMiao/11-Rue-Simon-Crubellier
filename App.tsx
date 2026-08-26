@@ -7,6 +7,7 @@ import HudBar from './components/HudBar';
 import CaseFile from './components/CaseFile';
 import SkillCheckModal from './components/SkillCheckModal';
 import RunEndScreen from './components/RunEndScreen';
+import GeneratingCeremony from './components/GeneratingCeremony';
 import {
   RoomData,
   PlayerState,
@@ -17,7 +18,11 @@ import {
   SkillId,
   NarrativeResponse,
 } from './types';
-import { generateStoryBible, generateRoomDescription } from './services/geminiService';
+import {
+  generateStoryBible,
+  generateRoomDescription,
+  isLanguageModelEnabled,
+} from './services/geminiService';
 import { describeMove, getReachableRooms } from './utils/gridLogic';
 import {
   INITIAL_PLAYER_STATE,
@@ -33,11 +38,18 @@ import {
   moveTimeCost,
   skillValue,
   spendSkillPoint,
+  upgradeRoom,
 } from './utils/gameLogic';
 import { performSkillCheck, interactionKey } from './utils/skillCheck';
 import { newRunSeed } from './utils/rng';
 import { BUILDING_LAYOUT } from './constants';
 import { STORAGE_KEY } from './constants/skills';
+import { buildingAudio } from './services/audioEngine';
+import {
+  moveKindForPrefetch,
+  roomsToPrefetch,
+  skeletonForRoom,
+} from './utils/roomRuntime';
 
 const App: React.FC = () => {
   const [selectedRoom, setSelectedRoom] = useState<RoomData | null>(null);
@@ -46,6 +58,7 @@ const App: React.FC = () => {
   const [gameState, setGameState] = useState<PlayerState>(INITIAL_PLAYER_STATE);
   const [isHydrated, setIsHydrated] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [muted, setMuted] = useState(() => buildingAudio.isMuted());
   const [pendingCheck, setPendingCheck] = useState<{
     interaction: Interaction;
     result: SkillCheckResult;
@@ -53,6 +66,10 @@ const App: React.FC = () => {
   } | null>(null);
   const [generatingRoomId, setGeneratingRoomId] = useState<string | null>(null);
   const generatingRef = useRef<string | null>(null);
+  const stateRef = useRef(gameState);
+  const prefetchRef = useRef<Record<string, NarrativeResponse>>({});
+  const prefetchingRef = useRef<Set<string>>(new Set());
+  stateRef.current = gameState;
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -85,6 +102,24 @@ const App: React.FC = () => {
     return () => window.clearTimeout(id);
   }, [toast]);
 
+  useEffect(() => {
+    const unlock = () => {
+      void buildingAudio.unlock();
+    };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    return () => window.removeEventListener('pointerdown', unlock);
+  }, []);
+
+  useEffect(() => {
+    if (gameState.runStatus !== 'playing') {
+      if (gameState.runStatus !== 'generating') buildingAudio.stopAmbient();
+      return;
+    }
+    const room = BUILDING_LAYOUT.find((r) => r.id === gameState.currentRoomId);
+    void buildingAudio.unlock();
+    buildingAudio.startAmbient(room?.floor ?? 0, gameState.morale / Math.max(1, gameState.maxMorale));
+  }, [gameState.runStatus, gameState.currentRoomId, gameState.morale, gameState.maxMorale]);
+
   const hundredth = hundredthUnlocked(gameState);
   const reachable = useMemo(
     () => getReachableRooms(gameState.currentRoomId, { hundredthUnlocked: hundredth }),
@@ -93,8 +128,31 @@ const App: React.FC = () => {
 
   const showToast = (msg: string) => setToast(msg);
 
+  const roomContext = (state: PlayerState, moveKind: 'walk' | 'knight' | 'elevator') => ({
+    historyContext: Object.entries(state.visitedRooms)
+      .slice(-5)
+      .map(([id, data]) => `Room ${id}: ${(data as NarrativeResponse).text} (Mood: ${(data as NarrativeResponse).mood})`)
+      .join('\n\n'),
+    storyBible: state.storyBible,
+    inventory: state.inventory.map((i) => i.name),
+    isKnightMove: moveKind === 'knight' || state.lastMoveKind === 'knight' || state.lastMoveWasKnightMove,
+    moveKind,
+    character: state.character,
+    knownClues: state.discoveredFacts,
+    plotSummary: state.plotThreads
+      .filter((t) => t.status !== 'unknown')
+      .map((t) => `${t.id}[${t.status}]: ${t.clues.join('; ')}`)
+      .join(' / '),
+    minutesPastEight: state.minutesPastEight,
+    morale: state.morale,
+    maxMorale: state.maxMorale,
+    seed: state.runSeed,
+  });
+
   const startRunWithCharacter = async (character: Character) => {
     const seed = newRunSeed();
+    prefetchRef.current = {};
+    prefetchingRef.current = new Set();
     setGameState({
       ...INITIAL_PLAYER_STATE,
       runStatus: 'generating',
@@ -115,56 +173,89 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRequestGenerate = useCallback(
-    async (room: RoomData) => {
-      if (gameState.visitedRooms[room.id] || generatingRoomId || generatingRef.current === room.id) return;
-      generatingRef.current = room.id;
-      setGeneratingRoomId(room.id);
-      try {
-        const content = await generateRoomDescription(room.id, room.name, {
-          historyContext: Object.entries(gameState.visitedRooms)
-            .slice(-5)
-            .map(([id, data]) => `Room ${id}: ${(data as NarrativeResponse).text} (Mood: ${(data as NarrativeResponse).mood})`)
-            .join('\n\n'),
-          storyBible: gameState.storyBible,
-          inventory: gameState.inventory.map((i) => i.name),
-          isKnightMove: gameState.lastMoveKind === 'knight' || gameState.lastMoveWasKnightMove,
-          moveKind: gameState.lastMoveKind,
-          character: gameState.character,
-          knownClues: gameState.discoveredFacts,
-          plotSummary: gameState.plotThreads
-            .filter((t) => t.status !== 'unknown')
-            .map((t) => `${t.id}[${t.status}]: ${t.clues.join('; ')}`)
-            .join(' / '),
-          minutesPastEight: gameState.minutesPastEight,
-          morale: gameState.morale,
-          maxMorale: gameState.maxMorale,
-          seed: gameState.runSeed,
+  const handleRequestGenerate = useCallback(async (room: RoomData) => {
+    const state = stateRef.current;
+    const existing = state.visitedRooms[room.id];
+    if (existing?.source === 'authored') return;
+    if (generatingRef.current === room.id) return;
+
+    const pref = prefetchRef.current[room.id];
+    if (pref) {
+      setGameState((prev) => upgradeRoom(prev, room.id, pref));
+      delete prefetchRef.current[room.id];
+      return;
+    }
+
+    const moveKind = state.lastMoveKind || 'walk';
+    if (!existing) {
+      const skeleton = skeletonForRoom(
+        room,
+        state.runSeed,
+        state.character,
+        moveKind === 'knight'
+      );
+      setGameState((prev) => cacheRoom(prev, room.id, skeleton));
+    }
+
+    if (!isLanguageModelEnabled) {
+      setGameState((prev) => {
+        const current = prev.visitedRooms[room.id];
+        if (!current || current.source === 'authored') return prev;
+        return upgradeRoom(prev, room.id, { ...current, source: 'authored' });
+      });
+      return;
+    }
+
+    generatingRef.current = room.id;
+    setGeneratingRoomId(room.id);
+    try {
+      const content = await generateRoomDescription(room.id, room.name, roomContext(stateRef.current, moveKind));
+      setGameState((prev) => upgradeRoom(prev, room.id, content));
+    } finally {
+      generatingRef.current = null;
+      setGeneratingRoomId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (gameState.runStatus !== 'playing' || !isLanguageModelEnabled) return;
+    const ids = roomsToPrefetch(reachable, gameState.currentRoomId, gameState.visitedRooms);
+    ids.forEach((id) => {
+      if (prefetchRef.current[id] || prefetchingRef.current.has(id)) return;
+      const room = BUILDING_LAYOUT.find((r) => r.id === id);
+      if (!room) return;
+      prefetchingRef.current.add(id);
+      const kind = moveKindForPrefetch(reachable, id);
+      generateRoomDescription(room.id, room.name, roomContext(stateRef.current, kind))
+        .then((content) => {
+          prefetchRef.current[id] = { ...content, source: 'authored' };
+        })
+        .finally(() => {
+          prefetchingRef.current.delete(id);
         });
-        setGameState((prev) => cacheRoom(prev, room.id, content));
-      } finally {
-        generatingRef.current = null;
-        setGeneratingRoomId(null);
-      }
-    },
-    [gameState, generatingRoomId]
-  );
+    });
+  }, [gameState.currentRoomId, gameState.runStatus, reachable, gameState.visitedRooms]);
 
   const handleRoomSelect = (room: RoomData) => {
     if (gameState.runStatus !== 'playing') return;
     const move = describeMove(reachable, room.id);
     if (move === 'blocked' && room.id !== gameState.currentRoomId) {
+      buildingAudio.blocked();
       showToast('走不到。试试相邻的走廊，或者那步骑士跳。');
       return;
     }
     if (room.id !== gameState.currentRoomId) {
-      const cost = moveTimeCost(move === 'blocked' ? 'walk' : move);
+      const kind = move === 'blocked' ? 'walk' : move;
+      if (kind === 'knight') buildingAudio.knight();
+      else if (kind === 'elevator') buildingAudio.elevator();
+      else buildingAudio.walk();
+      const cost = moveTimeCost(kind);
       setGameState((prev) => ({
         ...applyTime(prev, cost),
         currentRoomId: room.id,
-        lastMoveWasKnightMove: move === 'knight',
-        lastMoveWasWalk: move === 'walk',
-        lastMoveKind: move === 'blocked' ? 'walk' : move,
+        lastMoveWasKnightMove: kind === 'knight',
+        lastMoveWasWalk: kind === 'walk',
+        lastMoveKind: kind,
       }));
     }
     setSelectedRoom(room);
@@ -172,6 +263,7 @@ const App: React.FC = () => {
   };
 
   const handleBlocked = (room: RoomData) => {
+    buildingAudio.blocked();
     showToast(`${room.name || '那个格子'}现在走不到。骑士跳会发光。`);
   };
 
@@ -185,7 +277,7 @@ const App: React.FC = () => {
         ...collected,
         visitedRooms: {
           ...collected.visitedRooms,
-          [selectedRoom.id]: { ...room, collectible_item: undefined },
+          [selectedRoom.id]: { ...room, collectible_item: undefined, collectible_taken: true },
         },
       };
     });
@@ -251,6 +343,7 @@ const App: React.FC = () => {
     if (result.success && interaction.resolves_mystery) {
       showToast('拼图合上了。');
     } else if (!result.success) {
+      buildingAudio.moraleDrain();
       showToast('检定失败。意志被削去一角。');
     }
   };
@@ -259,7 +352,9 @@ const App: React.FC = () => {
     if (gameState.runStatus === 'playing') {
       if (!window.confirm('放弃这一局？种子、案卷和意志都会消失。')) return;
     }
+    buildingAudio.stopAmbient();
     localStorage.removeItem(STORAGE_KEY);
+    prefetchRef.current = {};
     setGameState(INITIAL_PLAYER_STATE);
     setSelectedRoom(null);
     setIsMobileMapOpen(true);
@@ -293,21 +388,28 @@ const App: React.FC = () => {
   }
 
   if (gameState.runStatus === 'generating') {
-    return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#eae7dc] text-stone-800 font-typewriter">
-        <div className="w-16 h-16 border-4 border-stone-800 border-t-transparent rounded-full animate-spin mb-8"></div>
-        <h2 className="text-xl uppercase tracking-widest mb-2">为这一局编织圣经</h2>
-        <p className="text-sm text-stone-500 animate-pulse">种子会决定谁在说谎，哪一块拼图缺席。</p>
-      </div>
-    );
+    return <GeneratingCeremony seed={gameState.runSeed} character={gameState.character} />;
   }
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-stone-50 text-stone-900">
+      <div className="paper-grain" />
+      <div className="vignette" />
       <HudBar
         state={gameState}
-        onOpenCase={() => setIsCaseOpen(true)}
-        onOpenSheet={() => setIsCaseOpen(true)}
+        muted={muted}
+        onToggleMute={() => {
+          const next = buildingAudio.toggleMuted();
+          setMuted(next);
+        }}
+        onOpenCase={() => {
+          buildingAudio.ui();
+          setIsCaseOpen(true);
+        }}
+        onOpenSheet={() => {
+          buildingAudio.ui();
+          setIsCaseOpen(true);
+        }}
         onReset={handleReset}
         onToggleMap={() => setIsMobileMapOpen(!isMobileMapOpen)}
         isMobileMapOpen={isMobileMapOpen}
@@ -327,6 +429,7 @@ const App: React.FC = () => {
             visitedRoomIds={visitedIds}
             reachable={reachable}
             puzzlePiecesCollected={gameState.puzzlePiecesCollected}
+            lastMoveKind={gameState.lastMoveKind}
             onBlocked={handleBlocked}
           />
         </div>
@@ -360,6 +463,7 @@ const App: React.FC = () => {
         onClose={() => setIsCaseOpen(false)}
         state={gameState}
         onInternalize={(id) => {
+          buildingAudio.ui();
           setGameState((prev) => internalizeThought(prev, id));
           showToast('念头住进来了。时间少了二十分钟。');
         }}

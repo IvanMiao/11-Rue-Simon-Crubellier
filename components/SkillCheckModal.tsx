@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import gsap from 'gsap';
 import { DIFFICULTY_LABEL, SKILL_META } from '../constants/skills';
 import { SkillCheckResult } from '../types';
+import { prefersReducedMotion } from '../utils/motion';
+import { buildingAudio } from '../services/audioEngine';
 
 interface SkillCheckModalProps {
   open: boolean;
@@ -18,12 +21,59 @@ const SkillCheckModal: React.FC<SkillCheckModalProps> = ({
   onFinished,
 }) => {
   const [tick, setTick] = useState(0);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const diceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open || !rolling) return;
+    buildingAudio.diceRoll();
     const id = window.setInterval(() => setTick((t) => t + 1), 80);
     return () => window.clearInterval(id);
   }, [open, rolling]);
+
+  useEffect(() => {
+    if (!open || rolling || !result) return;
+    buildingAudio.diceLand();
+    if (result.success) buildingAudio.success();
+    else buildingAudio.fail();
+  }, [open, rolling, result]);
+
+  useLayoutEffect(() => {
+    if (!open || !cardRef.current || prefersReducedMotion()) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        cardRef.current,
+        { y: 18, opacity: 0, scale: 0.96 },
+        { y: 0, opacity: 1, scale: 1, duration: 0.35, ease: 'power2.out' }
+      );
+    }, cardRef);
+    return () => ctx.revert();
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!diceRef.current || prefersReducedMotion()) return;
+    const ctx = gsap.context(() => {
+      if (rolling) {
+        gsap.to('.die-face', {
+          rotate: 14,
+          y: -5,
+          duration: 0.07,
+          repeat: -1,
+          yoyo: true,
+          ease: 'none',
+          stagger: 0.03,
+        });
+      } else {
+        gsap.killTweensOf('.die-face');
+        gsap.fromTo(
+          '.die-face',
+          { y: -12, rotate: -12 },
+          { y: 0, rotate: 0, duration: 0.45, ease: 'back.out(2)', stagger: 0.06 }
+        );
+      }
+    }, diceRef);
+    return () => ctx.revert();
+  }, [rolling, open]);
 
   if (!open || !result) return null;
 
@@ -33,8 +83,11 @@ const SkillCheckModal: React.FC<SkillCheckModalProps> = ({
   const shownTotal = shown1 + shown2 + result.skillValue;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-[#f4f1ea] w-full max-w-md border-4 border-stone-800 shadow-2xl p-8 text-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 check-veil p-4">
+      <div
+        ref={cardRef}
+        className="bg-[#f4f1ea] w-full max-w-md border-4 border-stone-800 shadow-2xl p-8 text-center"
+      >
         <div className="font-typewriter text-[10px] tracking-[0.35em] uppercase text-stone-500 mb-2">
           {result.kind === 'red' ? '红色检定 · 仅一次' : '白色检定 · 可再试'}
         </div>
@@ -46,11 +99,13 @@ const SkillCheckModal: React.FC<SkillCheckModalProps> = ({
         </p>
         <p className="font-serif italic text-stone-700 mb-8">{label}</p>
 
-        <div className="flex justify-center gap-4 mb-6">
+        <div ref={diceRef} className="flex justify-center gap-4 mb-6">
           {[shown1, shown2].map((d, i) => (
             <div
               key={i}
-              className="w-16 h-16 bg-white border-2 border-stone-800 flex items-center justify-center font-typewriter text-3xl shadow-[4px_4px_0_0_rgba(28,25,23,1)]"
+              className={`die-face w-16 h-16 bg-white border-2 border-stone-800 flex items-center justify-center font-typewriter text-3xl shadow-[4px_4px_0_0_rgba(28,25,23,1)] ${
+                !rolling ? 'is-settling' : ''
+              }`}
             >
               {d}
             </div>
@@ -60,6 +115,7 @@ const SkillCheckModal: React.FC<SkillCheckModalProps> = ({
         <p className="font-typewriter text-sm text-stone-600 mb-6">
           {shown1} + {shown2} + 技能 {result.skillValue} ={' '}
           <span className="font-bold text-stone-900">{shownTotal}</span>
+          <span className="text-stone-400"> / {result.dc}</span>
         </p>
 
         {!rolling && (
@@ -73,7 +129,7 @@ const SkillCheckModal: React.FC<SkillCheckModalProps> = ({
             </div>
             <button
               onClick={onFinished}
-              className="px-6 py-2 bg-stone-800 text-white font-typewriter text-xs uppercase tracking-widest"
+              className="px-6 py-2 bg-stone-800 text-white font-typewriter text-xs uppercase tracking-widest hover:bg-stone-700"
             >
               继续
             </button>

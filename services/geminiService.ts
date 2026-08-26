@@ -8,6 +8,8 @@ import { clockLabel, highestSkills } from "../utils/gameLogic";
 const apiKey = process.env.API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
 
+export const isLanguageModelEnabled = Boolean(apiKey);
+
 const skillEnum = SKILL_ORDER;
 
 const narrativeSchema = {
@@ -247,7 +249,7 @@ export const generateRoomDescription = async (
 ): Promise<NarrativeResponse> => {
   const seed = ctx.seed ?? 1;
   if (!apiKey) {
-    return fallbackRoom(roomId, roomName, seed, ctx.character, ctx.isKnightMove);
+    return { ...fallbackRoom(roomId, roomName, seed, ctx.character, ctx.isKnightMove), source: 'authored' };
   }
 
   let bibleContext = "";
@@ -329,12 +331,13 @@ export const generateRoomDescription = async (
         ...it,
         id: it.id || `${roomId}-act-${i}`,
       }));
+      data.source = 'authored';
       return data;
     }
     throw new Error("Empty response");
   } catch (error) {
     console.error("Generation error:", error);
-    return fallbackRoom(roomId, roomName, seed, ctx.character, ctx.isKnightMove);
+    return { ...fallbackRoom(roomId, roomName, seed, ctx.character, ctx.isKnightMove), source: 'authored' };
   }
 };
 
