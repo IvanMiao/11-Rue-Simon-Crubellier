@@ -27,6 +27,8 @@ type SimRow = {
   meanLockedGroups: number;
   meanWrongSubmissions: number;
   meanSolveMinute: number | null;
+  meanMaxKnightChain: number;
+  meanPonderUses: number;
   midnight: number;
   collapsed: number;
   trapped: number;
@@ -55,6 +57,8 @@ for (const bot of bots) {
       meanLockedGroups: mean(outcomes.map((outcome) => outcome.lockedGroups)) ?? 0,
       meanWrongSubmissions: mean(outcomes.map((outcome) => outcome.wrongSubmissions)) ?? 0,
       meanSolveMinute: mean(solved.map((outcome) => outcome.minutes)),
+      meanMaxKnightChain: mean(outcomes.map((outcome) => outcome.maxKnightChain)) ?? 0,
+      meanPonderUses: mean(outcomes.map((outcome) => outcome.ponderUses)) ?? 0,
       midnight: outcomes.filter((outcome) => outcome.status === 'midnight').length,
       collapsed: outcomes.filter((outcome) => outcome.status === 'collapsed').length,
       trapped: outcomes.filter((outcome) => outcome.trapped).length,
@@ -80,6 +84,8 @@ console.log(
     'mean locked groups',
     'mean wrong submissions',
     'mean solve minute',
+    'mean max knight chain',
+    'ponder uses / run',
     'midnight',
     'collapsed',
     'trapped',
@@ -94,6 +100,8 @@ rows.forEach((row) => {
       row.meanLockedGroups.toFixed(2),
       row.meanWrongSubmissions.toFixed(2),
       row.meanSolveMinute === null ? '—' : row.meanSolveMinute.toFixed(1),
+      row.meanMaxKnightChain.toFixed(2),
+      row.meanPonderUses.toFixed(2),
       percent(row.midnight),
       percent(row.collapsed),
       percent(row.trapped),
@@ -101,9 +109,20 @@ rows.forEach((row) => {
   );
 });
 
+const caseBotRates = rows
+  .filter((row) => row.bot === 'caseBot')
+  .map((row) => (100 * row.grade2Plus) / seedCount);
+const caseBotGrade2Spread =
+  caseBotRates.length > 0 ? Math.max(...caseBotRates) - Math.min(...caseBotRates) : 0;
+console.log(`caseBot grade ≥2 archetype spread: ${caseBotGrade2Spread.toFixed(1)} pp (target ≤10 pp).`);
+
 fs.writeFileSync(
   path.join(root, 'sim-report.json'),
-  `${JSON.stringify({ seeds: seedCount, rows, trappedRuns, replayFailures, replaySamples }, null, 2)}\n`
+  `${JSON.stringify(
+    { seeds: seedCount, rows, caseBotGrade2Spread, trappedRuns, replayFailures, replaySamples },
+    null,
+    2
+  )}\n`
 );
 
 const caseBotPass = rows

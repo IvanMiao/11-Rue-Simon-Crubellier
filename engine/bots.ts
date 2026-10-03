@@ -1,4 +1,4 @@
-import { ARCHETYPES, DEFAULT_SKILLS, SKILL_MAX } from '../constants/skills';
+import { ARCHETYPES, DEFAULT_SKILLS, SKILL_MAX, THOUGHT_SLOTS } from '../constants/skills';
 import { BUILDING_LAYOUT } from '../constants';
 import type { Character, PlayerState, RunStatus, SkillId } from '../types';
 import { describeMove, getReachableRooms } from '../utils/gridLogic';
@@ -6,6 +6,7 @@ import { INITIAL_PLAYER_STATE, hundredthUnlocked, moveTimeCost } from '../utils/
 import { fallbackRoom } from '../utils/fallbackContent';
 import { mulberry32 } from '../utils/rng';
 import { buildCase, caseBible, caseRoomContent, CASE_ROOM_IDS } from '../case/buildCase';
+import { CASE_ITEMS } from '../case/caseData';
 import type { CaseEvidence, CaseGraph } from '../case/types';
 import { Action } from './types';
 import {
@@ -67,9 +68,11 @@ function supportActions(state: PlayerState, random: () => number): Action[] {
   if (collectible && !state.inventory.some((item) => item.id === collectible.id)) {
     actions.push({ type: 'collect', itemId: collectible.id });
   }
-  state.thoughts
-    .filter((thought) => !thought.internalized)
-    .forEach((thought) => actions.push({ type: 'internalize', thoughtId: thought.id }));
+  if (state.thoughts.filter((thought) => thought.internalized).length < THOUGHT_SLOTS) {
+    state.thoughts
+      .filter((thought) => !thought.internalized)
+      .forEach((thought) => actions.push({ type: 'internalize', thoughtId: thought.id }));
+  }
   if (state.pendingSkillPoints > 0 && state.character) {
     const skills = Object.keys(state.character.skills) as SkillId[];
     const availableSkills = skills.filter((id) => state.character!.skills[id] < SKILL_MAX);
@@ -134,6 +137,27 @@ function evidenceRoomsForNeededCards(
   );
 }
 
+function requiredItemRoomsForNeededCards(
+  state: PlayerState,
+  graph: CaseGraph,
+  needed: Set<string>
+): string[] {
+  if (!state.case || needed.size === 0) return [];
+  const required = new Set(
+    graph.evidence
+      .filter(
+        (evidence) =>
+          evidence.requiresItem &&
+          !state.inventory.some((item) => item.id === evidence.requiresItem) &&
+          evidenceProvidesNeededCard(state, evidence, needed)
+      )
+      .map((evidence) => evidence.requiresItem!)
+  );
+  return CASE_ITEMS.filter(
+    (item) => required.has(item.id) && !state.inventory.some((owned) => owned.id === item.id)
+  ).map((item) => item.roomId);
+}
+
 function nextStepTo(state: PlayerState, targets: string[]): Action | null {
   const start = state.currentRoomId;
   if (!start || targets.length === 0) return null;
@@ -165,7 +189,7 @@ function nextStepTo(state: PlayerState, targets: string[]): Action | null {
       if (visited.has(neighbor)) return;
       const kind = describeMove(reachable, neighbor);
       if (kind === 'blocked') return;
-      const distance = shortest + moveTimeCost(kind);
+      const distance = shortest + moveTimeCost(kind, state);
       if (distance < (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) {
         distances.set(neighbor, distance);
         firstHop.set(neighbor, current === start ? neighbor : firstHop.get(current)!);
@@ -232,10 +256,17 @@ function randomBoardAction(state: PlayerState, graph: CaseGraph, random: () => n
     }
   }
   if (state.case.cards.length >= 2 && random() < 0.5) {
-    const aIndex = randomIndex(random, state.case.cards.length);
-    const bChoices = state.case.cards.filter((_, index) => index !== aIndex);
-    if (bChoices.length) {
-      return { type: 'combine', a: state.case.cards[aIndex], b: bChoices[randomIndex(random, bChoices.length)] };
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < state.case.cards.length; i += 1) {
+      for (let j = i + 1; j < state.case.cards.length; j += 1) {
+        const a = state.case.cards[i];
+        const b = state.case.cards[j];
+        if (isCombineAvailable(state, a, b)) pairs.push([a, b]);
+      }
+    }
+    if (pairs.length) {
+      const [a, b] = pairs[randomIndex(random, pairs.length)];
+      return { type: 'combine', a, b };
     }
   }
   const fullGroup = graph.groups.find(
@@ -288,6 +319,17 @@ export const caseBot: Bot = (state, _actions, random) => {
   if (correctGroup) return { type: 'submitGroup', groupId: correctGroup.id };
 
   const needed = neededCaseCards(state, graph);
+  const itemRooms = requiredItemRoomsForNeededCards(state, graph, needed);
+  const collectible = state.currentRoomId
+    ? state.visitedRooms[state.currentRoomId]?.collectible_item
+    : undefined;
+  if (
+    collectible &&
+    itemRooms.includes(state.currentRoomId!) &&
+    !state.inventory.some((item) => item.id === collectible.id)
+  ) {
+    return { type: 'collect', itemId: collectible.id };
+  }
   const look = currentCaseEvidence(state, graph, 'look', needed);
   if (look) return look;
   const check = currentCaseEvidence(state, graph, 'check', needed);
@@ -297,6 +339,7 @@ export const caseBot: Bot = (state, _actions, random) => {
   if (skill) return { type: 'spendPoint', skill };
 
   const lockedCount = state.case.lockedGroups.length;
+  if (itemRooms.length) return nextStepTo(state, itemRooms) || fallbackMove(state, random);
   const evidenceRooms = evidenceRoomsForNeededCards(state, graph, needed);
   if (state.currentRoomId === '100-1' && hasCloseCondition(state)) {
     return isInteractionAvailable(state, '100-1-finale')
@@ -447,6 +490,8 @@ export interface BotRunResult {
   grade: number | null;
   lockedGroups: number;
   wrongSubmissions: number;
+  maxKnightChain: number;
+  ponderUses: number;
   actions: Action[];
   finalState: PlayerState;
 }
@@ -467,11 +512,17 @@ export function runBot(bot: Bot, seed: number, archetypeIdx: number): BotRunResu
   const actions: Action[] = [];
   let state: PlayerState = INITIAL_PLAYER_STATE;
   let trapped = false;
+  let maxKnightChain = 0;
+  let ponderUses = 0;
 
   const applyAction = (action: Action): ReturnType<typeof step>['events'] => {
     actions.push(action);
     const result = step(state, action);
     state = result.state;
+    result.events.forEach((event) => {
+      if (event.type === 'moved') maxKnightChain = Math.max(maxKnightChain, event.chain);
+      if (event.type === 'pondered') ponderUses += 1;
+    });
     if (result.events.some((event) => event.type === 'rejected')) {
       trapped = true;
       return result.events;
@@ -521,6 +572,8 @@ export function runBot(bot: Bot, seed: number, archetypeIdx: number): BotRunResu
     grade: state.case?.grade ?? null,
     lockedGroups: state.case?.lockedGroups.length ?? 0,
     wrongSubmissions: state.case?.wrongSubmissions ?? 0,
+    maxKnightChain,
+    ponderUses,
     actions,
     finalState: state,
   };

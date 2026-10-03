@@ -4,12 +4,14 @@ import {
   MINUTES_PER_RUN,
   SKILL_MAX,
   SKILL_ORDER,
+  TIME_COMBINE,
   TIME_ELEVATOR,
   TIME_INSPECT,
   TIME_INTERACTION,
   TIME_KNIGHT,
   TIME_THOUGHT,
   TIME_WALK,
+  THOUGHT_SLOTS,
   XP_PER_LEVEL,
 } from '../constants/skills';
 import {
@@ -29,12 +31,13 @@ import {
 import { sanitizeRoomContent } from './fallbackContent';
 
 export const INITIAL_PLAYER_STATE: PlayerState = {
-  version: 5,
+  version: 6,
   runSeed: 0,
   runStatus: 'creating',
   minutesPastEight: 0,
   morale: BASE_MORALE,
   maxMorale: BASE_MORALE,
+  knightChain: 0,
   currentRoomId: null,
   visitedRooms: {},
   resolvedChecks: {},
@@ -65,10 +68,33 @@ export function moraleFromCharacter(character: Character): number {
   return BASE_MORALE + Math.floor(will / 3);
 }
 
-export function moveTimeCost(kind: 'walk' | 'knight' | 'elevator'): number {
-  if (kind === 'knight') return TIME_KNIGHT;
+export type ThoughtEffect = 'knight' | 'catalogue' | 'steam';
+
+export function hasInternalizedThought(state: PlayerState, effect: ThoughtEffect): boolean {
+  return state.thoughts.some((thought) => thought.internalized && thought.effect === effect);
+}
+
+export function moveTimeCost(
+  kind: 'walk' | 'knight' | 'elevator',
+  state?: PlayerState
+): number {
+  if (kind === 'knight') {
+    if (!state) return TIME_KNIGHT;
+    const chainCost = Math.max(4, TIME_KNIGHT - Math.min(state.knightChain ?? 0, 2) * 2);
+    return hasInternalizedThought(state, 'knight')
+      ? Math.max(3, chainCost - 2)
+      : chainCost;
+  }
   if (kind === 'elevator') return TIME_ELEVATOR;
-  return TIME_WALK;
+  return (
+    TIME_WALK +
+    (state && state.minutesPastEight >= 180 ? 5 : 0) +
+    (state && hasInternalizedThought(state, 'knight') ? 5 : 0)
+  );
+}
+
+export function combineTimeCost(state: PlayerState): number {
+  return hasInternalizedThought(state, 'catalogue') ? 5 : TIME_COMBINE;
 }
 
 export function normalizePlotThreads(threads: StoryPlotThread[]): PlotThreadState[] {
@@ -137,12 +163,18 @@ export function grantXp(state: PlayerState, amount: number): PlayerState {
 }
 
 export function skillBonusFromThoughts(state: PlayerState, skill: SkillId): number {
-  return state.thoughts.filter((t) => t.internalized && t.skill === skill).length;
+  return state.thoughts.filter((t) => t.internalized && !t.effect && t.skill === skill).length;
 }
 
 export function skillValue(state: PlayerState, skill: SkillId): number {
   const base = state.character?.skills[skill] ?? 1;
-  return Math.min(SKILL_MAX, base + skillBonusFromThoughts(state, skill));
+  const effectBonus = hasInternalizedThought(state, 'steam') ? 2 : 0;
+  const itemBonus =
+    skill === 'perception' && state.inventory.some((item) => item.id === 'it-loupe') ? 2 : 0;
+  return Math.min(
+    SKILL_MAX,
+    base + skillBonusFromThoughts(state, skill) + effectBonus + itemBonus
+  );
 }
 
 export function cacheRoom(state: PlayerState, roomId: string, content: NarrativeResponse): PlayerState {
@@ -358,6 +390,9 @@ export function spendSkillPoint(state: PlayerState, skill: SkillId): PlayerState
 export function internalizeThought(state: PlayerState, thoughtId: string): PlayerState {
   const thought = state.thoughts.find((t) => t.id === thoughtId);
   if (!thought || thought.internalized) return state;
+  if (state.thoughts.filter((candidate) => candidate.internalized).length >= THOUGHT_SLOTS) {
+    return state;
+  }
   let next = applyTime(state, TIME_THOUGHT);
   next = {
     ...next,

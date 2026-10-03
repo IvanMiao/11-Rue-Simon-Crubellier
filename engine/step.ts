@@ -2,12 +2,13 @@ import {
   FINALE_MIN_GROUPS,
   SKILL_MAX,
   SKILL_ORDER,
-  TIME_COMBINE,
+  THOUGHT_SLOTS,
   TIME_INTERACTION,
   TIME_SUBMIT,
   WRONG_SUBMIT_MORALE,
 } from '../constants/skills';
 import { BUILDING_LAYOUT } from '../constants';
+import { CASE_HOUR_PAGES } from '../case/caseData';
 import { CaseEvidence, CaseGraph, CaseState } from '../case/types';
 import { buildCase, caseRoomContent, CASE_ROOM_IDS } from '../case/buildCase';
 import {
@@ -17,8 +18,10 @@ import {
   applyTime,
   beginRun,
   cacheRoom,
+  combineTimeCost,
   collectItem,
   consumeInteraction,
+  hasInternalizedThought,
   hundredthUnlocked,
   internalizeThought,
   moveTimeCost,
@@ -55,6 +58,7 @@ function initialCaseState(graph: CaseGraph): CaseState {
     lockedGroups: [],
     wrongSubmissions: 0,
     retryMarks: {},
+    pondered: {},
     notes: [],
   };
 }
@@ -83,6 +87,15 @@ export function caseEvidenceAvailable(
     state.runStatus !== 'playing' ||
     !state.case ||
     state.case.takenEvidence.includes(evidence.id)
+  ) {
+    return false;
+  }
+  if (evidence.availableFrom !== undefined && state.minutesPastEight < evidence.availableFrom) {
+    return false;
+  }
+  if (
+    evidence.requiresItem &&
+    !state.inventory.some((item) => item.id === evidence.requiresItem)
   ) {
     return false;
   }
@@ -134,6 +147,57 @@ export function isInteractionAvailable(state: PlayerState, interactionId: string
   return true;
 }
 
+export function interactionLockReason(state: PlayerState, interactionId: string): string | null {
+  const roomId = state.currentRoomId;
+  const room = roomId ? state.visitedRooms[roomId] : undefined;
+  if (state.runStatus !== 'playing' || !roomId || !room) {
+    return '当前房间还没有可互动的内容。';
+  }
+  const interaction = room.available_interactions?.find(
+    (candidate) => (candidate.id || candidate.label) === interactionId
+  );
+  if (!interaction) return '找不到这项互动。';
+  if ((room.consumed_interaction_ids || []).includes(interactionId)) {
+    return '这项互动已经结束。';
+  }
+  if (roomId === '100-1' && interactionId === FINALE_INTERACTION.id) {
+    return (state.case?.lockedGroups.length ?? 0) >= FINALE_MIN_GROUPS
+      ? null
+      : '案卷至少要有两组对上。';
+  }
+
+  const evidence = caseEvidenceFor(state, interactionId);
+  if (evidence) {
+    if (evidence.availableFrom !== undefined && state.minutesPastEight < evidence.availableFrom) {
+      return '还没到时候。';
+    }
+    if (
+      evidence.requiresItem &&
+      !state.inventory.some((item) => item.id === evidence.requiresItem)
+    ) {
+      return '锁着。门房也许有钥匙。';
+    }
+    if (evidence.kind === 'check' && state.morale <= 1) {
+      return '意志太低，无法继续检定。';
+    }
+    return caseEvidenceAvailable(state, evidence, { checkMorale: true })
+      ? null
+      : '这项互动已经结束。';
+  }
+
+  const isCheck =
+    interaction.type === 'check' || Boolean(interaction.skill && interaction.difficulty);
+  if (isCheck && state.morale <= 1) return '意志太低，无法继续检定。';
+  const key = interactionKey(roomId, interactionId);
+  if (
+    state.resolvedChecks[key] === true ||
+    (interaction.kind === 'red' && state.attemptedRedChecks.includes(key))
+  ) {
+    return '这项互动已经结束。';
+  }
+  return null;
+}
+
 export function isCombineAvailable(state: PlayerState, a: string, b: string): boolean {
   if (
     state.runStatus !== 'playing' ||
@@ -152,7 +216,7 @@ export function isCombineAvailable(state: PlayerState, a: string, b: string): bo
   return !recipe || !state.case.usedRecipes.includes(recipe.id);
 }
 
-export function step(state: PlayerState, action: Action): { state: PlayerState; events: GameEvent[] } {
+function stepAction(state: PlayerState, action: Action): { state: PlayerState; events: GameEvent[] } {
   try {
     switch (action.type) {
       case 'startRun': {
@@ -169,7 +233,7 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         const graph = buildCase(action.seed);
         let next: PlayerState = {
           ...beginRun(action.character, action.seed, action.bible),
-          version: 5,
+          version: 6,
           case: initialCaseState(graph),
         };
         next = cacheRoom(next, '0-5', caseRoomContent(graph, '0-5'));
@@ -196,17 +260,28 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         const kind = describeMove(reachable, action.roomId);
         if (kind === 'blocked') return reject(state, action, '这个房间现在走不到。');
         const from = state.currentRoomId;
-        const minutes = moveTimeCost(kind);
+        const minutes = moveTimeCost(kind, state);
+        const chain =
+          kind === 'knight'
+            ? state.visitedRooms[action.roomId]
+              ? 0
+              : state.knightChain + 1
+            : 0;
         let next: PlayerState = {
           ...applyTime(state, minutes),
           currentRoomId: action.roomId,
+          knightChain: chain,
           lastMoveWasKnightMove: kind === 'knight',
           lastMoveWasWalk: kind === 'walk',
           lastMoveKind: kind,
         };
         const events: GameEvent[] = [
-          { type: 'moved', from, to: action.roomId, kind, minutes },
+          { type: 'moved', from, to: action.roomId, kind, minutes, chain },
         ];
+        if (chain > 0 && chain % 3 === 0) {
+          next = applyMorale(next, 1);
+          events.push({ type: 'knightTour', chain });
+        }
         if (next.runStatus === 'playing' && !state.visitedRooms[action.roomId]) {
           if (CASE_ROOM_IDS.includes(action.roomId as (typeof CASE_ROOM_IDS)[number]) || action.roomId === '100-1') {
             next = cacheRoom(next, action.roomId, caseRoomContent(buildCase(state.runSeed), action.roomId));
@@ -246,8 +321,9 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           (candidate) => (candidate.id || candidate.label) === action.interactionId
         );
         if (!interaction) return reject(state, action, '找不到这项互动。');
-        if (!isInteractionAvailable(state, action.interactionId)) {
-          return reject(state, action, '这项互动已经结束。');
+        const lockReason = interactionLockReason(state, action.interactionId);
+        if (lockReason) {
+          return reject(state, action, lockReason);
         }
 
         if (roomId === '100-1' && action.interactionId === FINALE_INTERACTION.id) {
@@ -490,7 +566,7 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           return reject(state, action, '这两张词卡已经联想过了。');
         }
         if (!recipe) {
-          const next = applyTime(state, TIME_COMBINE);
+          const next = applyTime(state, combineTimeCost(state));
           return {
             state: next,
             events: [
@@ -500,7 +576,7 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           };
         }
         const added = addCards(state.case, recipe.cards);
-        let next = applyTime(state, TIME_COMBINE);
+        let next = applyTime(state, combineTimeCost(state));
         next = {
           ...next,
           case: {
@@ -535,6 +611,7 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         );
         let next = applyTime(state, TIME_SUBMIT);
         if (correct) {
+          next = applyMorale(next, 1);
           next = {
             ...next,
             case: {
@@ -550,7 +627,12 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
             ],
           };
         }
-        next = applyMorale(next, WRONG_SUBMIT_MORALE);
+        next = applyMorale(
+          next,
+          hasInternalizedThought(state, 'catalogue')
+            ? WRONG_SUBMIT_MORALE - 1
+            : WRONG_SUBMIT_MORALE
+        );
         next = {
           ...next,
           case: {
@@ -566,10 +648,57 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           ],
         };
       }
+      case 'ponder': {
+        if (state.runStatus !== 'playing' || !state.case) {
+          return reject(state, action, '现在不能默念案卷。');
+        }
+        const graph = buildCase(state.runSeed);
+        const group = graph.groups.find((candidate) => candidate.id === action.groupId);
+        if (!group) return reject(state, action, '找不到这一组。');
+        if (state.case.lockedGroups.includes(group.id)) {
+          return reject(state, action, '这一组已经锁定。');
+        }
+        if (group.slots.some((slot) => !state.case!.slots[slot.id])) {
+          return reject(state, action, '这一组还有空格。');
+        }
+        if (state.morale < 2) return reject(state, action, '意志不够了。');
+        const arrangement = group.slots.map((slot) => state.case!.slots[slot.id]).join(',');
+        const previous = state.case.pondered[group.id]?.split('\n').filter(Boolean) || [];
+        if (previous.includes(arrangement)) {
+          return reject(state, action, '同样的排法已经默念过了。');
+        }
+        const correct = group.slots.filter(
+          (slot) => state.case!.slots[slot.id] === slot.answer
+        ).length;
+        const next = applyMorale(state, -1);
+        return {
+          state: {
+            ...next,
+            case: {
+              ...state.case,
+              pondered: {
+                ...state.case.pondered,
+                [group.id]: [...previous, arrangement].join('\n'),
+              },
+              notes: [
+                ...state.case.notes,
+                `默念 ${group.title}：三格里有 ${correct} 格是对的。`,
+              ],
+            },
+          },
+          events: [
+            { type: 'pondered', groupId: group.id, correct },
+            ...endingEvent(state, next),
+          ],
+        };
+      }
       case 'internalize': {
         if (state.runStatus !== 'playing') return reject(state, action, '这一局已经结束。');
         const thought = state.thoughts.find((candidate) => candidate.id === action.thoughtId);
         if (!thought || thought.internalized) return reject(state, action, '这个念头无法内化。');
+        if (state.thoughts.filter((candidate) => candidate.internalized).length >= THOUGHT_SLOTS) {
+          return reject(state, action, '念头只能住进两个。');
+        }
         const next = internalizeThought(state, action.thoughtId);
         return {
           state: next,
@@ -598,4 +727,52 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
   } catch {
     return reject(state, action, '行动资料无效。');
   }
+}
+
+function applyHourPages(
+  before: PlayerState,
+  result: { state: PlayerState; events: GameEvent[] }
+): { state: PlayerState; events: GameEvent[] } {
+  if (
+    before.runStatus !== 'playing' ||
+    result.state.runStatus !== 'playing' ||
+    result.state.minutesPastEight <= before.minutesPastEight
+  ) {
+    return result;
+  }
+
+  let next = result.state;
+  const events = [...result.events];
+  CASE_HOUR_PAGES.forEach((page) => {
+    if (
+      next.runStatus !== 'playing' ||
+      before.minutesPastEight >= page.minute ||
+      result.state.minutesPastEight < page.minute
+    ) {
+      return;
+    }
+    const pageStart = next;
+    next = {
+      ...next,
+      case: next.case
+        ? { ...next.case, notes: [...next.case.notes, page.text] }
+        : next.case,
+    };
+    events.push({ type: 'hourTurned', ...page, roomIds: [...page.roomIds] });
+    if (hasInternalizedThought(next, 'steam')) {
+      next = applyMorale(next, -1);
+      events.push(...endingEvent(pageStart, next));
+    }
+  });
+  return {
+    state: next,
+    events:
+      next.runStatus === 'playing'
+        ? events
+        : events.filter((event) => event.type !== 'needsRoomContent'),
+  };
+}
+
+export function step(state: PlayerState, action: Action): { state: PlayerState; events: GameEvent[] } {
+  return applyHourPages(state, stepAction(state, action));
 }

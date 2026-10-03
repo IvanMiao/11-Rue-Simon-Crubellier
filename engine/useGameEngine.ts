@@ -18,7 +18,7 @@ export function useGameEngine() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as SaveFile;
-        if (parsed.version === 5 && Array.isArray(parsed.actions)) {
+        if (parsed.version === 6 && Array.isArray(parsed.actions)) {
           const replayedState = replay(parsed.actions);
           stateRef.current = replayedState;
           actionsRef.current = parsed.actions;

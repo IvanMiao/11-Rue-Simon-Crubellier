@@ -4,12 +4,12 @@ import { Action } from './types';
 import { step } from './step';
 
 export interface SaveFile {
-  version: 5;
+  version: 6;
   actions: Action[];
 }
 
 export function createSave(actions: Action[]): SaveFile {
-  return { version: 5, actions: [...actions] };
+  return { version: 6, actions: [...actions] };
 }
 
 export function replay(actions: Action[]): PlayerState {

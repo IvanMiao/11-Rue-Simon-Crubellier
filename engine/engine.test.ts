@@ -1,9 +1,20 @@
-import { DEFAULT_SKILLS, FINALE_MIN_GROUPS, TIME_COMBINE, TIME_INTERACTION, TIME_SUBMIT, WRONG_SUBMIT_MORALE } from '../constants/skills';
+import {
+  DEFAULT_SKILLS,
+  FINALE_MIN_GROUPS,
+  THOUGHT_SLOTS,
+  TIME_COMBINE,
+  TIME_INTERACTION,
+  TIME_SUBMIT,
+  TIME_THOUGHT,
+  TIME_WALK,
+  WRONG_SUBMIT_MORALE,
+} from '../constants/skills';
 import { buildCase, caseBible, caseRoomContent, solveCase } from '../case/buildCase';
+import { CASE_HOUR_PAGES, CASE_ITEMS, CASE_ROOM_IDS, CASE_THOUGHTS } from '../case/caseData';
 import type { CaseState, LiarId } from '../case/types';
 import { Character } from '../types';
 import { getReachableRooms } from '../utils/gridLogic';
-import { INITIAL_PLAYER_STATE } from '../utils/gameLogic';
+import { INITIAL_PLAYER_STATE, skillValue } from '../utils/gameLogic';
 import { FINALE_INTERACTION, sanitizeRoomContent } from '../utils/fallbackContent';
 import { createSave, replay } from './save';
 import { caseBot, runBot } from './bots';
@@ -14,6 +25,13 @@ import {
   roomsWithAvailableEvidence,
   step,
 } from './step';
+import {
+  interactionLockReason,
+  isPonderAvailable,
+  moveCostTo,
+  nextHourPage,
+  roomSignals,
+} from './selectors';
 import { Action } from './types';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -54,6 +72,44 @@ function withCase(state: ReturnType<typeof makeRun>['state'], update: Partial<Ca
   return { ...state, case: { ...state.case!, ...update } };
 }
 
+function withThoughtEffects(
+  state: ReturnType<typeof makeRun>['state'],
+  effects: string[]
+) {
+  return {
+    ...state,
+    thoughts: state.thoughts.map((thought) => ({
+      ...thought,
+      internalized: effects.includes(thought.id),
+    })),
+  };
+}
+
+function findKnightRoute(start: string, moves: number): string[] | null {
+  const visit = (roomId: string, path: string[]): string[] | null => {
+    if (path.length === moves + 1) return path;
+    const reachable = getReachableRooms(roomId);
+    for (const target of reachable.knight) {
+      if (reachable.walk.has(target) || reachable.elevator.has(target)) continue;
+      if (path.includes(target)) continue;
+      const route = visit(target, [...path, target]);
+      if (route) return route;
+    }
+    return null;
+  };
+  return visit(start, [start]);
+}
+
+function markVisited(state: ReturnType<typeof makeRun>['state'], roomId: string) {
+  return {
+    ...state,
+    visitedRooms: {
+      ...state.visitedRooms,
+      [roomId]: state.visitedRooms[roomId] || { text: '', items: [], mood: '' },
+    },
+  };
+}
+
 assert(new Set(Array.from({ length: 100 }, (_, seed) => buildCase(seed).liar)).size === 3, 'seeds 0..99 cover every liar');
 const seedByLiar = new Map<LiarId, number>();
 for (let seed = 0; seed < 100; seed += 1) {
@@ -74,14 +130,31 @@ seedByLiar.forEach((seed) => {
     `case with liar ${buildCase(seed).liar} is solvable from looks and recipes: ${lookOnly.missing.join(', ')}`
   );
 });
+const keySeed = seedByLiar.get('p-nochere')!;
+const keyringIndex = CASE_ITEMS.findIndex((item) => item.id === 'it-keyring');
+assert(keyringIndex >= 0, 'the keyring is authored as a case item');
+const [removedKeyring] = CASE_ITEMS.splice(keyringIndex, 1);
+try {
+  assert(
+    !solveCase(buildCase(keySeed), { allowChecks: false }).solvable,
+    'the nocheré variant is unsolvable without its required keyring'
+  );
+} finally {
+  if (removedKeyring) CASE_ITEMS.splice(keyringIndex, 0, removedKeyring);
+}
 
 const started = makeRun(42);
 assert(started.events.length === 0, 'the authored hall is cached without requesting generated content');
 assert(Boolean(started.state.visitedRooms['0-5']), 'a new run starts with the local hall content');
-assert(started.state.version === 5, 'new runs use save version five');
+assert(started.state.version === 6, 'new runs use save version six');
+assert(started.state.knightChain === 0, 'a new run starts with no knight chain');
 assert(started.state.case?.liar === started.graph.liar, 'the seeded case is stored in the run state');
 assert(started.state.discoveredFacts.length === 0, 'the case hook is not a clue');
 assert(started.state.storyBible?.title === '第 439 幅', 'the case bible has the authored title');
+assert(
+  JSON.stringify(started.state.storyBible?.thoughts) === JSON.stringify(CASE_THOUGHTS),
+  'case runs use the authored case thoughts'
+);
 const handEvidence = started.graph.evidence.find((evidence) => evidence.id === 'ev-bb-hand')!;
 const lowMoraleState = { ...atRoom(started.state, '3-1'), morale: 1 };
 assert(
@@ -95,6 +168,25 @@ assert(
 assert(
   !caseEvidenceAvailable(lowMoraleState, handEvidence, { checkMorale: true }),
   'bot evidence availability applies the morale gate when requested'
+);
+assert(roomSignals(started.state)['0-5'].includes('lamp'), 'available looks light their room');
+assert(
+  roomSignals(started.state)['-1-3'].includes('locked'),
+  'rooms with missing required items show a locked signal'
+);
+assert(
+  !roomSignals({ ...lowMoraleState, minutesPastEight: 0 })['3-1'].includes('check'),
+  'check signals respect the morale gate'
+);
+assert(
+  interactionLockReason(started.state, 'ev-hall-lift') === '还没到时候。',
+  'late evidence reports its authored lock reason'
+);
+assert(
+  nextHourPage(started.state)?.minute === 60 &&
+    nextHourPage(started.state)?.hour === 21 &&
+    nextHourPage(started.state)?.title === '二十一点',
+  'the next hour-page selector exposes the next page'
 );
 assert(
   started.state.storyBible?.investigator_hook ===
@@ -110,6 +202,359 @@ assert(mailbox.state.case?.notes.length === 1, 'the look response is added to ca
 assert(mailbox.events.some((event) => event.type === 'cardsFound'), 'card discovery emits cardsFound');
 assert(!mailbox.events.some((event) => event.type === 'clueFound'), 'case cards are not narrative clues');
 assert(!isInteractionAvailable(mailbox.state, 'ev-hall-mailboxes'), 'a consumed look is unavailable');
+
+const crossingAt21 = step(
+  { ...started.state, minutesPastEight: 55 },
+  { type: 'interact', interactionId: 'ev-hall-mailboxes' }
+);
+assert(
+  crossingAt21.events.some(
+    (event) =>
+      event.type === 'hourTurned' &&
+      event.minute === 60 &&
+      event.hour === 21 &&
+      event.title === CASE_HOUR_PAGES[0].title &&
+      event.text === CASE_HOUR_PAGES[0].text
+  ),
+  'crossing 21:00 emits its authored hour page'
+);
+assert(
+  crossingAt21.state.case?.notes.includes(CASE_HOUR_PAGES[0].text),
+  'crossed hour-page text is appended to case notes'
+);
+assert(
+  isInteractionAvailable(crossingAt21.state, 'ev-hall-lift'),
+  'hour pages do not remove evidence and late evidence becomes available'
+);
+assert(
+  roomSignals(crossingAt21.state)['0-5'].includes('changed'),
+  'rooms signal evidence whose authored availability time has arrived'
+);
+assert(
+  nextHourPage(crossingAt21.state)?.minute === 120 &&
+    nextHourPage(crossingAt21.state)?.hour === 22,
+  'the hour-page selector advances after the first page'
+);
+
+const crossingAt22State = {
+  ...withCase(started.state, { cards: ['shape-x', 'o-blank-sheet'] }),
+  minutesPastEight: 115,
+};
+const crossingAt22 = step(crossingAt22State, {
+  type: 'combine',
+  a: 'shape-x',
+  b: 'o-blank-sheet',
+});
+assert(
+  crossingAt22.events.some(
+    (event) =>
+      event.type === 'hourTurned' &&
+      event.minute === 120 &&
+      event.text === CASE_HOUR_PAGES[1].text
+  ),
+  'crossing 22:00 emits the second hour page'
+);
+assert(
+  nextHourPage({ ...crossingAt22.state, minutesPastEight: 180 }) === null,
+  'there is no next hour page after 23:00'
+);
+
+const steamThoughts = withThoughtEffects(
+  {
+    ...withCase(started.state, { cards: ['shape-x', 'o-blank-sheet'] }),
+    minutesPastEight: 175,
+    morale: 2,
+  },
+  ['thought-steam']
+);
+const crossingAt23 = step(steamThoughts, {
+  type: 'combine',
+  a: 'shape-x',
+  b: 'o-blank-sheet',
+});
+assert(
+  crossingAt23.events.some(
+    (event) =>
+      event.type === 'hourTurned' &&
+      event.minute === 180 &&
+      event.title === CASE_HOUR_PAGES[2].title
+  ),
+  'crossing 23:00 emits the third hour page'
+);
+assert(crossingAt23.state.morale === 1, 'thought-steam costs one morale at an hour page');
+const steamCollapse = step(
+  { ...steamThoughts, morale: 1 },
+  { type: 'combine', a: 'shape-x', b: 'o-blank-sheet' }
+);
+assert(
+  steamCollapse.state.runStatus === 'collapsed' &&
+    steamCollapse.events.some((event) => event.type === 'runEnded' && event.status === 'collapsed'),
+  'an hour-page morale cost can collapse the run and emits runEnded'
+);
+const hallState = atRoom(started.state, '0-5');
+const nonCaseWalkTarget = [...getReachableRooms('0-5').all].find(
+  (roomId) =>
+    !CASE_ROOM_IDS.includes(roomId as (typeof CASE_ROOM_IDS)[number]) &&
+    moveCostTo(hallState, roomId)?.kind === 'walk'
+)!;
+const roomContentEndingMove = step(
+  withThoughtEffects(
+    {
+      ...hallState,
+      minutesPastEight: 180 - TIME_WALK,
+      morale: 1,
+    },
+    ['thought-steam']
+  ),
+  { type: 'move', roomId: nonCaseWalkTarget }
+);
+assert(
+  roomContentEndingMove.state.runStatus === 'collapsed' &&
+    !roomContentEndingMove.events.some((event) => event.type === 'needsRoomContent'),
+  'hour-page collapse does not request new room content after the run ends'
+);
+
+const knightRoute = findKnightRoute('0-5', 3);
+assert(knightRoute, 'three consecutive knight moves are reachable from the hall');
+const darkState = { ...started.state, minutesPastEight: 180 };
+const darkReachable = getReachableRooms('0-5');
+const darkWalkTarget = [...darkReachable.walk].find(
+  (roomId) => !darkReachable.knight.has(roomId)
+)!;
+const darkCost = moveCostTo(darkState, darkWalkTarget);
+const darkMove = step(darkState, { type: 'move', roomId: darkWalkTarget });
+assert(darkCost?.minutes === 20, 'walking from 23:00 costs twenty minutes');
+assert(
+  moveCostTo(darkState, knightRoute[1])?.minutes === 8,
+  'the 23:00 penalty does not affect knight moves'
+);
+assert(
+  darkMove.events.some((event) => event.type === 'moved' && event.minutes === darkCost?.minutes),
+  'moveCostTo exactly matches the 23:00 walking cost'
+);
+
+const lateSeed = [...Array(100).keys()].find((seed) => buildCase(seed).liar === 'p-nochere')!;
+const lateRun = makeRun(lateSeed);
+const coalEvidence = lateRun.graph.evidence.find((evidence) => evidence.id === 'ev-ch-coal')!;
+const lockedCoal = step(atRoom(lateRun.state, coalEvidence.roomId), {
+  type: 'interact',
+  interactionId: 'ev-ch-coal',
+});
+assert(
+  lockedCoal.events[0]?.type === 'rejected' &&
+    lockedCoal.events[0].reason === '锁着。门房也许有钥匙。',
+  'coal evidence is also locked before collecting the keyring'
+);
+const earlyLiftState = { ...lateRun.state, minutesPastEight: 59 };
+const earlyLift = step(earlyLiftState, { type: 'interact', interactionId: 'ev-hall-lift' });
+assert(
+  earlyLift.events[0]?.type === 'rejected' &&
+    earlyLift.events[0].reason === '还没到时候。',
+  'the lift evidence is rejected before minute 60 with exact copy'
+);
+const lateLift = step({ ...lateRun.state, minutesPastEight: 60 }, {
+  type: 'interact',
+  interactionId: 'ev-hall-lift',
+});
+assert(
+  lateLift.events.some(
+    (event) =>
+      event.type === 'interacted' &&
+      event.text === '铜指针停在 −1。有人坐它下过锅炉房。'
+  ),
+  'the lift evidence resolves the liar-specific text after minute 60'
+);
+const earlyHand = step(
+  { ...atRoom(lateRun.state, '3-1'), minutesPastEight: 119 },
+  { type: 'interact', interactionId: 'ev-bb-hand-late' }
+);
+assert(
+  earlyHand.events[0]?.type === 'rejected' &&
+    earlyHand.events[0].reason === '还没到时候。',
+  'the late hand evidence is rejected before minute 120'
+);
+const lateHand = step(
+  { ...atRoom(lateRun.state, '3-1'), minutesPastEight: 120 },
+  { type: 'interact', interactionId: 'ev-bb-hand-late' }
+);
+assert(
+  lateHand.state.case?.cards.includes('shape-w') &&
+    lateHand.events.some(
+      (event) =>
+        event.type === 'interacted' &&
+        event.text === '一个小时过去，他的手指松开了一线。那一块的轮廓是 W。'
+    ),
+  'the late hand evidence grants W after minute 120'
+);
+
+const lockedReceiptState = atRoom(started.state, '0-3');
+assert(
+  interactionLockReason(lockedReceiptState, 'ev-an-receipt') === '锁着。门房也许有钥匙。',
+  'receipt evidence reports the missing-key lock reason'
+);
+const rejectedReceipt = step(lockedReceiptState, {
+  type: 'interact',
+  interactionId: 'ev-an-receipt',
+});
+assert(
+  rejectedReceipt.events[0]?.type === 'rejected' &&
+    rejectedReceipt.events[0].reason === '锁着。门房也许有钥匙。',
+  'receipt evidence cannot be taken before collecting the keyring'
+);
+const keyRoom = atRoom(started.state, '0-4');
+assert(
+  keyRoom.visitedRooms['0-4'].collectible_item?.id === 'it-keyring',
+  'the door-room exposes the keyring as a collectible item'
+);
+const keyCollected = step(keyRoom, { type: 'collect', itemId: 'it-keyring' });
+assert(
+  keyCollected.state.inventory.some((item) => item.id === 'it-keyring') &&
+    keyCollected.state.minutesPastEight === keyRoom.minutesPastEight,
+  'collecting the keyring uses the existing zero-time collect behavior'
+);
+assert(
+  !roomSignals(keyCollected.state)['-1-3'].includes('locked'),
+  'collecting the keyring clears the locked room signal'
+);
+const lateKeyCollection = step(atRoom(lateRun.state, '0-4'), {
+  type: 'collect',
+  itemId: 'it-keyring',
+});
+const coalAfterKey = step(
+  atRoom(lateKeyCollection.state, coalEvidence.roomId),
+  { type: 'interact', interactionId: 'ev-ch-coal' }
+);
+assert(
+  coalAfterKey.state.case?.cards.includes('o-coal-glove'),
+  'coal evidence is accepted after collecting the keyring'
+);
+const receipt = step(atRoom(keyCollected.state, '0-3'), {
+  type: 'interact',
+  interactionId: 'ev-an-receipt',
+});
+assert(
+  receipt.state.case?.cards.includes('o-receipt'),
+  'receipt evidence is accepted after collecting the keyring'
+);
+
+const loupeRoom = atRoom(started.state, '8-6');
+assert(
+  loupeRoom.visitedRooms['8-6'].collectible_item?.id === 'it-loupe',
+  'the laboratory exposes the loupe as a collectible item'
+);
+const loupeCollected = step(loupeRoom, { type: 'collect', itemId: 'it-loupe' });
+const perceptionSeed = [...Array(1000).keys()].find(
+  (seed) => buildCase(seed).handSkill === 'perception'
+)!;
+const perceptionRun = makeRun(perceptionSeed);
+const handCheckWithLoupe = step(
+  {
+    ...atRoom(perceptionRun.state, '3-1'),
+    inventory: loupeCollected.state.inventory,
+  },
+  { type: 'interact', interactionId: 'ev-bb-hand' }
+);
+const loupeCheck = handCheckWithLoupe.events.find((event) => event.type === 'checkRolled');
+const handCheckWithoutLoupe = step(atRoom(perceptionRun.state, '3-1'), {
+  type: 'interact',
+  interactionId: 'ev-bb-hand',
+});
+const baseHandCheck = handCheckWithoutLoupe.events.find((event) => event.type === 'checkRolled');
+assert(
+  loupeCheck?.type === 'checkRolled' &&
+    baseHandCheck?.type === 'checkRolled' &&
+    loupeCheck.result.skillValue === baseHandCheck.result.skillValue + 2 &&
+    loupeCheck.result.skillValue ===
+      skillValue({ ...atRoom(perceptionRun.state, '3-1'), inventory: loupeCollected.state.inventory }, 'perception'),
+  'the loupe adds two to perception and reports the effective value in the check result'
+);
+
+let chainState = {
+  ...started.state,
+  morale: started.state.maxMorale - 1,
+};
+const expectedKnightCosts = [8, 6, 4];
+for (let index = 0; index < expectedKnightCosts.length; index += 1) {
+  const target = knightRoute[index + 1];
+  const movement = step(chainState, { type: 'move', roomId: target });
+  const moved = movement.events.find((event) => event.type === 'moved');
+  assert(
+    moved?.type === 'moved' &&
+      moved.kind === 'knight' &&
+      moved.minutes === expectedKnightCosts[index] &&
+      moved.chain === index + 1,
+    `knight chain move ${index + 1} costs ${expectedKnightCosts[index]} minutes`
+  );
+  if (index === 2) {
+    assert(
+      movement.events.some((event) => event.type === 'knightTour' && event.chain === 3),
+      'each positive third knight move emits knightTour'
+    );
+  }
+  chainState = markVisited(movement.state, target);
+}
+assert(
+  chainState.knightChain === 3 &&
+    chainState.morale === chainState.maxMorale &&
+    chainState.case?.lockedGroups.length === 0,
+  'every third knight move grants capped morale'
+);
+assert(
+  step(chainState, { type: 'move', roomId: knightRoute[2] }).state.knightChain === 0,
+  'a knight move into a visited room resets the chain'
+);
+const walkReachable = getReachableRooms(chainState.currentRoomId).walk;
+const resetWalkTarget = [...walkReachable].find(
+  (roomId) => !getReachableRooms(chainState.currentRoomId).knight.has(roomId)
+)!;
+const resetWalk = step(
+  { ...chainState, knightChain: 2 },
+  { type: 'move', roomId: resetWalkTarget }
+);
+assert(
+  resetWalk.events.some((event) => event.type === 'moved' && event.kind === 'walk' && event.chain === 0),
+  'walking resets the knight chain'
+);
+const elevatorReachable = getReachableRooms('ELEVATOR');
+const elevatorTarget = [...elevatorReachable.elevator].find(
+  (roomId) => !elevatorReachable.walk.has(roomId) && !elevatorReachable.knight.has(roomId)
+)!;
+const elevatorReset = step(
+  {
+    ...started.state,
+    currentRoomId: 'ELEVATOR',
+    knightChain: 2,
+    visitedRooms: {
+      ...started.state.visitedRooms,
+      ELEVATOR: { text: '', items: [], mood: '' },
+    },
+  },
+  { type: 'move', roomId: elevatorTarget }
+);
+assert(
+  elevatorReset.events.some(
+    (event) => event.type === 'moved' && event.kind === 'elevator' && event.chain === 0
+  ),
+  'elevator moves reset the knight chain'
+);
+
+const knightThoughtState = withThoughtEffects(started.state, ['thought-knight']);
+const knightCost = moveCostTo(knightThoughtState, knightRoute[1]);
+assert(knightCost?.kind === 'knight' && knightCost.minutes === 6, 'thought-knight reduces the first jump by two');
+assert(
+  moveCostTo({ ...knightThoughtState, knightChain: 2 }, knightRoute[1])?.minutes === 3,
+  'thought-knight knight moves never cost less than three minutes'
+);
+const litWalkTarget = darkWalkTarget;
+assert(
+  moveCostTo(knightThoughtState, litWalkTarget)?.minutes === 20 &&
+    moveCostTo({ ...knightThoughtState, minutesPastEight: 180 }, litWalkTarget)?.minutes === 25,
+  'thought-knight adds five walking minutes and stacks with the 23:00 penalty'
+);
+assert(
+  moveCostTo(started.state, 'not-a-room') === null,
+  'moveCostTo returns null for a blocked move'
+);
 
 const failingHandCheck = (() => {
   for (let seed = 0; seed < 1000; seed += 1) {
@@ -201,6 +646,62 @@ assert(
   wrongPair.events.some((event) => event.type === 'combined' && event.recipeId === null),
   'an invalid pair emits an empty combination event'
 );
+const catalogueCombineState = withThoughtEffects(
+  withCase(recipeRun.state, { cards: ['o-cut-notes', 'shape-x'] }),
+  ['thought-catalogue']
+);
+const catalogueCombine = step(catalogueCombineState, {
+  type: 'combine',
+  a: 'o-cut-notes',
+  b: 'shape-x',
+});
+assert(
+  catalogueCombine.state.minutesPastEight === 5,
+  'thought-catalogue reduces a combination to five minutes'
+);
+
+assert(THOUGHT_SLOTS === 2, 'two thought slots are available');
+const internalizedThought = step(started.state, {
+  type: 'internalize',
+  thoughtId: 'thought-knight',
+});
+assert(
+  internalizedThought.state.minutesPastEight === TIME_THOUGHT &&
+    internalizedThought.state.thoughts.find((thought) => thought.id === 'thought-knight')
+      ?.internalized,
+  'internalizing a thought costs twenty minutes'
+);
+const cappedThoughtState = {
+  ...started.state,
+  thoughts: started.state.thoughts.map((thought, index) => ({
+    ...thought,
+    internalized: index < THOUGHT_SLOTS,
+  })),
+};
+const thirdThought = step(cappedThoughtState, {
+  type: 'internalize',
+  thoughtId: 'thought-steam',
+});
+assert(
+  thirdThought.events[0]?.type === 'rejected' &&
+    thirdThought.events[0].reason === '念头只能住进两个。',
+  'internalizing a third thought is rejected with exact copy'
+);
+const catalogueSkillState = withThoughtEffects(started.state, ['thought-catalogue']);
+assert(
+  skillValue(catalogueSkillState, 'logic') === started.state.character!.skills.logic,
+  'case thoughts do not add the legacy skill point'
+);
+const steamCheckState = withThoughtEffects(atRoom(started.state, '6-3'), ['thought-steam']);
+const steamCheck = step(steamCheckState, { type: 'interact', interactionId: 'ev-wk-chair' });
+const steamCheckEvent = steamCheck.events.find((event) => event.type === 'checkRolled');
+assert(
+  steamCheckEvent?.type === 'checkRolled' &&
+    steamCheckEvent.result.skillValue === skillValue(steamCheckState, 'inland') &&
+    steamCheckEvent.result.skillValue ===
+      steamCheckState.character!.skills.inland + 2,
+  'thought-steam adds two to every check skill value'
+);
 
 const alibiLiars = [...seedByLiar.entries()];
 for (const [liar, seed] of alibiLiars) {
@@ -253,11 +754,11 @@ const wrongGroup = withCase(groupRun.state, {
   cards: ['shape-w', 'shape-x', 'p-winckler'],
   slots: { ...groupRun.state.case!.slots, A1: 'shape-w', A2: 'shape-x', A3: 'p-winckler' },
 });
-const wrongSubmission = step(wrongGroup, { type: 'submitGroup', groupId: 'A' });
+const wrongSubmission = step({ ...wrongGroup, morale: 3 }, { type: 'submitGroup', groupId: 'A' });
 assert(wrongSubmission.state.case?.wrongSubmissions === 1, 'a wrong group submission is counted');
 assert(wrongSubmission.state.case?.lockedGroups.length === 0, 'a wrong group is not locked');
-assert(wrongSubmission.state.morale === wrongGroup.morale + WRONG_SUBMIT_MORALE, 'a wrong submission costs one morale');
-assert(wrongSubmission.state.minutesPastEight === TIME_SUBMIT, 'a group submission costs ten minutes');
+assert(wrongSubmission.state.morale === 3 + WRONG_SUBMIT_MORALE, 'a wrong submission costs one morale');
+assert(wrongSubmission.state.minutesPastEight === TIME_SUBMIT, 'a group submission costs five minutes');
 assert(
   wrongSubmission.events.some((event) => event.type === 'groupRejected'),
   'a wrong group submission emits groupRejected'
@@ -266,10 +767,94 @@ const correctGroup = withCase(groupRun.state, {
   cards: ['shape-x', 'shape-w', 'p-winckler'],
   slots: { ...groupRun.state.case!.slots, A1: 'shape-x', A2: 'shape-w', A3: 'p-winckler' },
 });
-const lockedGroup = step(correctGroup, { type: 'submitGroup', groupId: 'A' });
+const correctGroupLowMorale = { ...correctGroup, morale: correctGroup.maxMorale - 1 };
+const lockedGroup = step(correctGroupLowMorale, { type: 'submitGroup', groupId: 'A' });
 assert(lockedGroup.state.case?.lockedGroups.includes('A'), 'a correct group is locked');
 assert(lockedGroup.events.some((event) => event.type === 'groupLocked'), 'a correct group emits groupLocked');
 assert(lockedGroup.state.case?.lockedGroups.length === 1, 'one group is not enough to unlock the finale');
+assert(
+  lockedGroup.state.morale === lockedGroup.state.maxMorale,
+  'correctly locking a group grants one capped morale'
+);
+
+const ponderGroup = groupRun.graph.groups.find((group) => group.id === 'A')!;
+const ponderState = withCase(
+  { ...groupRun.state, morale: groupRun.state.maxMorale },
+  {
+    cards: ['shape-v', 'shape-w', 'shape-x', 'p-winckler'],
+    slots: {
+      ...groupRun.state.case!.slots,
+      A1: 'shape-v',
+      A2: 'shape-w',
+      A3: 'p-winckler',
+    },
+  }
+);
+assert(isPonderAvailable(ponderState, 'A'), 'a full unlocked group with enough morale can be pondered');
+const ponder = step(ponderState, { type: 'ponder', groupId: 'A' });
+assert(
+  ponder.state.case?.pondered.A === 'shape-v,shape-w,p-winckler' &&
+    ponder.state.morale === ponderState.morale - 1 &&
+    ponder.state.minutesPastEight === ponderState.minutesPastEight,
+  'ponder stores the arrangement, costs one morale and no time'
+);
+assert(
+  ponder.events.some((event) => event.type === 'pondered' && event.groupId === 'A' && event.correct === 2) &&
+    ponder.state.case?.notes.includes(`默念 ${ponderGroup.title}：三格里有 2 格是对的。`),
+  'ponder reports the correct-slot count and appends its note'
+);
+assert(!isPonderAvailable(ponder.state, 'A'), 'a previously pondered arrangement is unavailable');
+const repeatedPonder = step(ponder.state, { type: 'ponder', groupId: 'A' });
+assert(
+  repeatedPonder.events[0]?.type === 'rejected' &&
+    repeatedPonder.events[0].reason === '同样的排法已经默念过了。',
+  'repeating the same ponder arrangement is rejected'
+);
+const alternatePonderState = withCase(ponder.state, {
+  pondered: ponder.state.case!.pondered,
+  slots: { ...ponder.state.case!.slots, A1: 'shape-x' },
+});
+const alternatePonder = step(alternatePonderState, { type: 'ponder', groupId: 'A' });
+assert(alternatePonder.events.some((event) => event.type === 'pondered'), 'a changed arrangement can be pondered');
+const oldArrangement = withCase(alternatePonder.state, {
+  slots: { ...alternatePonder.state.case!.slots, A1: 'shape-v' },
+});
+assert(
+  step(oldArrangement, { type: 'ponder', groupId: 'A' }).events[0]?.type === 'rejected',
+  'a previous arrangement remains unavailable after changing the slots'
+);
+assert(!isPonderAvailable(groupRun.state, 'A'), 'an incomplete group cannot be pondered');
+const incompletePonder = step(groupRun.state, { type: 'ponder', groupId: 'A' });
+assert(
+  incompletePonder.events[0]?.type === 'rejected' &&
+    incompletePonder.events[0].reason === '这一组还有空格。',
+  'pondering an incomplete group is rejected with exact copy'
+);
+const lockedPonderState = withCase(ponderState, { lockedGroups: ['A'] });
+const lockedPonder = step(lockedPonderState, { type: 'ponder', groupId: 'A' });
+assert(
+  lockedPonder.events[0]?.type === 'rejected' &&
+    lockedPonder.events[0].reason === '这一组已经锁定。',
+  'pondering a locked group is rejected with exact copy'
+);
+const lowMoralePonder = step(
+  { ...ponderState, morale: 1 },
+  { type: 'ponder', groupId: 'A' }
+);
+assert(
+  lowMoralePonder.events[0]?.type === 'rejected' &&
+    lowMoralePonder.events[0].reason === '意志不够了。',
+  'pondering without enough morale is rejected with exact copy'
+);
+
+const catalogueWrongGroup = step(
+  withThoughtEffects({ ...wrongGroup, morale: 3 }, ['thought-catalogue']),
+  { type: 'submitGroup', groupId: 'A' }
+);
+assert(
+  catalogueWrongGroup.state.morale === 1,
+  'thought-catalogue makes an incorrect submission cost two morale'
+);
 
 assert(
   !getReachableRooms('0-5', { hundredthUnlocked: false }).all.has('100-1'),
@@ -350,7 +935,7 @@ assert(
 );
 
 const save = createSave([started.startAction]);
-assert(save.version === 5, 'action-log saves use version five');
+assert(save.version === 6, 'action-log saves use version six');
 
 const botRun = runBot(caseBot, 314159, 1);
 const replayedBotRun = replay(botRun.actions);

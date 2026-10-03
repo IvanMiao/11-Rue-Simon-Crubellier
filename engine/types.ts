@@ -7,6 +7,7 @@ import {
   SkillId,
   StoryBible,
 } from '../types';
+import type { CaseHourPage } from '../case/types';
 
 export type Action =
   | { type: 'startRun'; character: Character; seed: number; bible: StoryBible }
@@ -17,11 +18,14 @@ export type Action =
   | { type: 'placeCard'; slotId: string; cardId: string | null }
   | { type: 'combine'; a: string; b: string }
   | { type: 'submitGroup'; groupId: string }
+  | { type: 'ponder'; groupId: string }
   | { type: 'internalize'; thoughtId: string }
   | { type: 'spendPoint'; skill: SkillId };
 
 export type GameEvent =
-  | { type: 'moved'; from: string | null; to: string; kind: 'walk' | 'knight' | 'elevator'; minutes: number }
+  | { type: 'moved'; from: string | null; to: string; kind: 'walk' | 'knight' | 'elevator'; minutes: number; chain: number }
+  | { type: 'knightTour'; chain: number }
+  | ({ type: 'hourTurned' } & CaseHourPage)
   | { type: 'needsRoomContent'; roomId: string }
   | { type: 'checkRolled'; roomId: string; interactionId: string; label: string; result: SkillCheckResult; body: string }
   | { type: 'interacted'; roomId: string; interactionId: string; text: string }
@@ -30,6 +34,7 @@ export type GameEvent =
   | { type: 'combined'; recipeId: string | null; text: string }
   | { type: 'groupLocked'; groupId: string }
   | { type: 'groupRejected'; groupId: string }
+  | { type: 'pondered'; groupId: string; correct: number }
   | { type: 'itemCollected'; item: InventoryItem }
   | { type: 'thoughtInternalized'; thoughtId: string }
   | { type: 'runEnded'; status: RunStatus }

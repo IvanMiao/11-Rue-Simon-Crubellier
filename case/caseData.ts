@@ -1,5 +1,5 @@
 import type { CheckDifficulty, CheckKind, SkillId } from '../types';
-import type { CardKind, LiarId } from './types';
+import type { CardKind, CaseHourPage, CaseItem, CaseThought, LiarId } from './types';
 
 export const CASE_ROOM_IDS = [
   '0-5',
@@ -13,6 +13,69 @@ export const CASE_ROOM_IDS = [
   '0-3',
   '6-1',
 ] as const;
+
+export const CASE_HOUR_PAGES: CaseHourPage[] = [
+  {
+    minute: 60,
+    hour: 21,
+    title: '二十一点',
+    text: '二十一点。电梯的铜指针动了一格，又停住。',
+    roomIds: ['0-5'],
+  },
+  {
+    minute: 120,
+    hour: 22,
+    title: '二十二点',
+    text: '二十二点。三楼传来一声很轻的咔哒，像手指松开。',
+    roomIds: ['3-1'],
+  },
+  {
+    minute: 180,
+    hour: 23,
+    title: '二十三点',
+    text: '二十三点。楼梯的定时灯熄了，摸黑走路要多花五分钟。骑士不需要灯。',
+    roomIds: [],
+  },
+];
+
+export const CASE_ITEMS: CaseItem[] = [
+  {
+    id: 'it-keyring',
+    name: '诺谢尔太太的钥匙串',
+    description: '门房的钥匙串，能开楼里每一扇上锁的门。',
+    roomId: '0-4',
+  },
+  {
+    id: 'it-loupe',
+    name: '莫雷莱的放大镜',
+    description: '镜片上有一道裂纹。拿着它，感知检定 +2。',
+    roomId: '8-6',
+  },
+];
+
+export const CASE_THOUGHTS: CaseThought[] = [
+  {
+    id: 'thought-knight',
+    title: '正确的路径从来不是最短的那条',
+    skill: 'constraint',
+    description: '骑士跳少花 2 分钟（最少 3 分钟）；走路多花 5 分钟。',
+    effect: 'knight',
+  },
+  {
+    id: 'thought-catalogue',
+    title: '如果一切都能被列举',
+    skill: 'logic',
+    description: '联想只花 5 分钟；对照出错扣 2 点意志。',
+    effect: 'catalogue',
+  },
+  {
+    id: 'thought-steam',
+    title: '墙壁比住户更记得谁哭过',
+    skill: 'shivers',
+    description: '所有检定 +2；每到整点，意志 −1。',
+    effect: 'steam',
+  },
+];
 
 export const CASE_LIAR_IDS: LiarId[] = ['p-nochere', 'p-smautf', 'p-valene'];
 
@@ -115,6 +178,8 @@ export interface CaseEvidenceTemplate {
   kind: 'look' | 'check';
   label: string;
   cards: string[];
+  availableFrom?: number;
+  requiresItem?: string;
   failCards?: string[];
   text?: string;
   successText?: string;
@@ -133,6 +198,19 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
     label: '读信箱上的名字',
     cards: ['p-bartlebooth', 'p-winckler', 'p-morellet', 'p-nochere', 'p-smautf', 'p-valene'],
     text: '铜牌一排排亮着。巴特尔布思、温克勒、莫雷莱、诺谢尔太太、斯莫特、瓦莱纳。温克勒的那格信箱塞满了两年的灰。',
+  },
+  {
+    id: 'ev-hall-lift',
+    roomId: '0-5',
+    kind: 'look',
+    label: '看电梯的铜指针',
+    cards: [],
+    availableFrom: 60,
+    textByLiar: {
+      'p-nochere': '铜指针停在 −1。有人坐它下过锅炉房。',
+      'p-smautf': '铜指针停在 0。底层只有门厅和店铺。',
+      'p-valene': '铜指针停在 III。',
+    },
   },
   {
     id: 'ev-bb-puzzle',
@@ -154,6 +232,15 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
     checkKind: 'white',
     successText: '那一块的轮廓是 W。它永远放不进 X。',
     failureText: '指缝里露出一角，像一个 V。你不太确定。',
+  },
+  {
+    id: 'ev-bb-hand-late',
+    roomId: '3-1',
+    kind: 'look',
+    label: '再看他的手',
+    cards: ['shape-w'],
+    availableFrom: 120,
+    text: '一个小时过去，他的手指松开了一线。那一块的轮廓是 W。',
   },
   {
     id: 'ev-bb-sill',
@@ -247,6 +334,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
     kind: 'look',
     label: '翻煤堆旁的手套',
     cards: ['o-coal-glove'],
+    requiresItem: 'it-keyring',
     textByLiar: {
       'p-nochere': '手套还是温的，内侧缝着门房的号码。',
       'p-smautf': '手套冷透了，挂在这里不止一个冬天。',
@@ -259,6 +347,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
     kind: 'look',
     label: '读柜台上的收据',
     cards: ['o-receipt'],
+    requiresItem: 'it-keyring',
     textByLiar: {
       'p-smautf': '收据开于 20:00 整，签名：斯莫特。',
       'p-nochere': '收据是上周的，签名是马基索夫人。',

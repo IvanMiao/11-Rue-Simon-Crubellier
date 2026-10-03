@@ -115,9 +115,10 @@ export const WRONG_SUBMIT_MORALE = -1;
 export const FINALE_MIN_GROUPS = 2;
 export const TIME_INSPECT = 5;
 export const TIME_THOUGHT = 20;
+export const THOUGHT_SLOTS = 2;
 export const XP_PER_LEVEL = 7;
 export const START_ROOM_ID = '0-5';
-export const STORAGE_KEY = 'perec_run_state_v5';
+export const STORAGE_KEY = 'perec_run_state_v6';
 
 export const ARCHETYPES: ArchetypeDef[] = [
   {
