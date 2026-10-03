@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CaseGraph } from '../../case/types';
 import type { Action, GameEvent } from '../../engine/types';
 import type { PlayerState } from '../../types';
+import { TONES } from '../../art/palette';
 import { clockLabel } from '../../utils/gameLogic';
 import { CELLS, CLINAMEN_CELL, cellTitle, chapterNumeral, CELL_BY_ID } from '../../world/damier';
 import {
@@ -30,6 +31,12 @@ const VIA_TEXT = { look: '观察', check: '检定', checkFail: '检定失败', r
 
 function hourOf(minutes: number): Hour {
   return Math.min(23, 20 + Math.floor(Math.max(0, minutes) / 60)) as Hour;
+}
+
+function coatToneFor(archetype?: string) {
+  if (archetype?.includes('通灵者')) return TONES.aubergine;
+  if (archetype?.includes('棋手')) return TONES.navy;
+  return TONES.ochre;
 }
 
 function footnoteFor(state: PlayerState, cardId: string) {
@@ -65,6 +72,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   const state = frozen || liveState;
   const current = state.currentRoomId;
   const shownCell = viewing && state.visitedRooms[viewing] ? viewing : current;
+  const playerCoatTone = coatToneFor(state.character?.archetype);
 
   useEffect(() => {
     if (!toast) return;
@@ -275,6 +283,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
               onAct={onLine}
               onCheckDone={finishCheck}
               hour={hourOf(state.minutesPastEight)}
+              playerCoatTone={playerCoatTone}
               stageMode={isCaseOpen ? 'blueprint' : 'print'}
               highlightedLineId={highlightedLineId}
               onHighlightLine={setHighlightedLineId}

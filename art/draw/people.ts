@@ -405,6 +405,20 @@ function legs(ctx: Ctx, m: CastMember) {
   const legW = skirt ? 34 : 50 * Math.sqrt(w);
   const top = skirt ? HEM[m.costume].y - 10 : HIP + 20;
   const fill = m.trousers;
+  if (m.pose === 'seatedReach') {
+    limb(ctx, [[-12 * w, top], [28, -256], [124, ANKLE]], legW, shade(fill, -0.12));
+    limb(ctx, [[18 * w, top], [110, -286], [196, ANKLE]], legW, fill);
+    for (const x of [124, 196]) {
+      fs(ctx, INK, () => {
+        ctx.moveTo(x - 30, ANKLE - 6);
+        ctx.lineTo(x + 34, ANKLE - 8);
+        ctx.quadraticCurveTo(x + 56, ANKLE + 4, x + 54, 0);
+        ctx.lineTo(x - 30, 0);
+        ctx.closePath();
+      }, 4);
+    }
+    return;
+  }
   limb(ctx, [[-22 * w, top], [-26 * w, -240], [-30, ANKLE]], legW, shade(fill, -0.12));
   limb(ctx, [[22 * w, top], [24 * w, -240], [30, ANKLE]], legW, fill);
   for (const x of [-30, 30]) {
@@ -416,6 +430,14 @@ function legs(ctx: Ctx, m: CastMember) {
       ctx.closePath();
     }, 4);
   }
+}
+
+function seatedChair(ctx: Ctx) {
+  limb(ctx, [[-152, -642], [-152, -412], [15, -412]], 14, PALETTE.wood);
+  limb(ctx, [[-140, -414], [-126, 0]], 11, PALETTE.woodDark);
+  limb(ctx, [[8, -412], [34, 0]], 11, PALETTE.woodDark);
+  limb(ctx, [[-140, -414], [30, -414]], 15, PALETTE.wood);
+  line(ctx, [[-146, -556], [-84, -556]], 7, PALETTE.brass);
 }
 
 function sleeveColor(m: CastMember) {
@@ -453,6 +475,12 @@ function arms(m: CastMember): ArmSet {
     case 'reach':
       return {
         back: hang,
+        front: [sf, [118, -604], [212, -566]],
+        inFront: (ctx) => wPiece(ctx, 246, -590),
+      };
+    case 'seatedReach':
+      return {
+        back: [sb, [-50 * w, -546], [-48 * w, -430]],
         front: [sf, [118, -604], [212, -566]],
         inFront: (ctx) => wPiece(ctx, 246, -590),
       };
@@ -617,11 +645,12 @@ function drawFigureRaw(ctx: Ctx, m: CastMember) {
   ctx.strokeStyle = INK;
 
   const a = arms(m);
+  if (m.pose === 'seatedReach') seatedChair(ctx);
   legs(ctx, m);
   // the upper body leans forward around the hip
   ctx.save();
   ctx.translate(0, HIP);
-  ctx.rotate(m.build.stoop * 0.16);
+  ctx.rotate(m.build.stoop * 0.16 + (m.pose === 'seatedReach' ? 0.12 : 0));
   ctx.translate(0, -HIP);
   if (m.costume === 'frockcoat') {
     // coat tails behind the legs
@@ -640,11 +669,11 @@ function drawFigureRaw(ctx: Ctx, m: CastMember) {
   torso(ctx, m);
   if (m.costume === 'housecoatApron') keyRing(ctx, -64 * m.build.width, -440);
   // neck and head
-  const lean = m.build.stoop * 40;
+  const lean = m.build.stoop * 40 + (m.pose === 'seatedReach' ? 28 : 0);
   fs(ctx, m.head.skin, () => ctx.rect(-14 + lean * 0.4, SHOULDER - 46, 40, 56));
   ctx.save();
   ctx.translate(10 + lean, HEAD_Y + lean * 0.4);
-  ctx.rotate(m.build.stoop * 0.22);
+  ctx.rotate(m.build.stoop * 0.22 + (m.pose === 'seatedReach' ? 0.08 : 0));
   drawHead(ctx, m);
   ctx.restore();
   limb(ctx, a.front, 42, sleeve);

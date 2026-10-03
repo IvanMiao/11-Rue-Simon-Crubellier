@@ -28,6 +28,7 @@ interface RoomPageProps {
   onAct: (line: SheetLine) => void;
   onCheckDone: () => void;
   hour: Hour;
+  playerCoatTone: string;
   stageMode: 'print' | 'blueprint';
   highlightedLineId: string | null;
   onHighlightLine: (lineId: string | null) => void;
@@ -64,10 +65,11 @@ const CheckSlip: React.FC<{
   line: SheetLine;
   graph: CaseGraph | null;
   check: PendingLineCheck | null;
+  coatTone: string;
   onRoll: () => void;
   onCancel: () => void;
   onDone: () => void;
-}> = ({ line, graph, check, onRoll, onCancel, onDone }) => {
+}> = ({ line, graph, check, coatTone, onRoll, onCancel, onDone }) => {
   const handRef = useRef<HTMLCanvasElement>(null);
   const info = line.check!;
   const meta = SKILL_META[info.skill];
@@ -83,8 +85,14 @@ const CheckSlip: React.FC<{
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.round(420 * ratio);
     canvas.height = Math.round(150 * ratio);
-    drawDiceHand(ctx, { phase, tick: check?.tick || 0, die1: d1 || 1, die2: d2 || 1 });
-  }, [phase, check?.tick, d1, d2]);
+    drawDiceHand(ctx, {
+      phase,
+      tick: check?.tick || 0,
+      die1: d1 || 1,
+      die2: d2 || 1,
+      coatTone,
+    });
+  }, [phase, check?.tick, d1, d2, coatTone]);
 
   return (
     <div className="check-slip">
@@ -154,6 +162,7 @@ const RoomPage: React.FC<RoomPageProps> = ({
   onAct,
   onCheckDone,
   hour,
+  playerCoatTone,
   stageMode,
   highlightedLineId,
   onHighlightLine,
@@ -248,6 +257,7 @@ const RoomPage: React.FC<RoomPageProps> = ({
                   line={line}
                   graph={graph}
                   check={check?.lineId === line.id ? check : null}
+                  coatTone={playerCoatTone}
                   onRoll={() => onAct(line)}
                   onCancel={() => onArm(null)}
                   onDone={onCheckDone}

@@ -2,12 +2,13 @@ import * as THREE from 'three';
 import { CASE_ROOM_IDS } from '../../case/buildCase';
 import { PALETTE, HOUR_LIGHT, LIGHT_2000 } from '../palette';
 import { applyCssTokens } from '../cssTokens';
-import { CELLS, CLINAMEN_CELL } from '../../world/damier';
+import { CELLS, cellTitle, CLINAMEN_CELL } from '../../world/damier';
 import { InkRenderer } from '../inkPass';
+import { configureStageCamera, STAGE_CAMERA } from './camera';
 import { buildCellRoom } from './cellRooms';
 import { cellScene } from './cellScenes';
 
-const KIND_LABEL: Record<string, string> = {
+const KIND_LABEL: Record<ReturnType<typeof cellScene>['kind'], string> = {
   stair: '楼梯',
   hall: '门厅',
   loge: '门房',
@@ -24,22 +25,25 @@ const KIND_LABEL: Record<string, string> = {
   empty: '空房',
 };
 
-function paperLabel(text: string) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 80;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = PALETTE.paper;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = PALETTE.ink;
-  ctx.lineWidth = 4;
-  ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
-  ctx.fillStyle = PALETTE.ink;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = "600 27px 'Noto Serif SC', 'Noto Serif CJK SC', serif";
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-  return new THREE.CanvasTexture(canvas);
+function disposeGroup(group: THREE.Group) {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
+  group.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (mesh.geometry) geometries.add(mesh.geometry);
+    const list = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    for (const material of list) {
+      materials.add(material);
+      for (const value of Object.values(material)) {
+        if (value instanceof THREE.Texture) textures.add(value);
+      }
+    }
+  });
+  textures.forEach((texture) => texture.dispose());
+  materials.forEach((material) => material.dispose());
+  geometries.forEach((geometry) => geometry.dispose());
+  group.clear();
 }
 
 async function main() {
@@ -57,32 +61,42 @@ async function main() {
   const samples = [
     ...CASE_ROOM_IDS.map((cellId) => {
       const scene = cellScene(cellId);
-      return { cellId, scene, label: `${cellId} · ${KIND_LABEL[scene.kind]}` };
+      return { cellId, scene, label: `${cellId} · ${cellTitle(cellId)} · ${KIND_LABEL[scene.kind]}` };
     }),
     ...emptyCells.map((cell, index) => {
       const seed = emptySeeds[index] ?? 1;
       const scene = { ...cellScene(cell.id), seed };
-      return { cellId: cell.id, scene, label: `${cell.id} · 空房 · 种子 ${scene.seed}` };
+      return {
+        cellId: cell.id,
+        scene,
+        label: `${cell.id} · ${cellTitle(cell.id)} · ${KIND_LABEL.empty} · 种子 ${scene.seed}`,
+      };
     }),
     {
       cellId: CLINAMEN_CELL,
       scene: cellScene(CLINAMEN_CELL),
-      label: `${CLINAMEN_CELL} · ${KIND_LABEL.clinamen}`,
+      label: `${CLINAMEN_CELL} · 缺掉的一格 · ${KIND_LABEL.clinamen}`,
     },
   ];
-  const columns = 5;
-  const rows = Math.ceil(samples.length / columns);
-  const spacingX = 4.25;
-  const spacingZ = 4.35;
+  const tileWidth = 380;
+  const tileHeight = 285;
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const host = document.getElementById('cells-stage')!;
+  host.replaceChildren();
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(PALETTE.paper);
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 90);
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 80);
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(pixelRatio);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  document.getElementById('cells-stage')!.appendChild(renderer.domElement);
+  renderer.setSize(tileWidth, tileHeight, false);
+  const ink = new InkRenderer(renderer, scene, camera);
+  ink.setMode(mode);
+  ink.setSize(tileWidth, tileHeight);
+  configureStageCamera(camera, tileWidth, tileHeight);
 
   const sun = new THREE.DirectionalLight(LIGHT_2000.sunColor, LIGHT_2000.sunIntensity);
   sun.castShadow = true;
@@ -95,30 +109,6 @@ async function main() {
   const hemi = new THREE.HemisphereLight(LIGHT_2000.hemiSky, LIGHT_2000.hemiGround, LIGHT_2000.hemiIntensity);
   scene.add(hemi);
 
-  const centerX = ((columns - 1) * spacingX) / 2;
-  const centerZ = ((rows - 1) * spacingZ) / 2;
-  samples.forEach(({ cellId, scene: data, label: labelText }, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const x = column * spacingX - centerX;
-    const z = row * spacingZ - centerZ;
-    const room = buildCellRoom(data, cellId);
-    room.position.set(x, 0, z);
-    scene.add(room);
-    const labelSprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: paperLabel(labelText), depthTest: false })
-    );
-    labelSprite.position.set(x, -0.26, z + 1.82);
-    labelSprite.scale.set(3.25, 0.48, 1);
-    labelSprite.userData.noInk = true;
-    scene.add(labelSprite);
-    if (hour === 23 && room.userData.hasPendant) {
-      const pendant = new THREE.PointLight(PALETTE.light, 2.4, 5.2);
-      pendant.position.set(x, 2.35, z);
-      scene.add(pendant);
-    }
-  });
-
   const hourLight = HOUR_LIGHT[hour];
   const angle = ((hourLight.angle - 112) * Math.PI) / 180;
   const direction = new THREE.Vector3(...LIGHT_2000.sunDir).applyAxisAngle(new THREE.Vector3(0, 1, 0), angle).normalize();
@@ -128,35 +118,40 @@ async function main() {
   sun.intensity = LIGHT_2000.sunIntensity * (1 - hourLight.night * 1.5);
   hemi.intensity = LIGHT_2000.hemiIntensity * (1 - hourLight.night);
   hemi.color.set(hourLight.night > 0.3 ? PALETTE.roof : LIGHT_2000.hemiSky);
-  scene.traverse((object) => {
-    if (object.userData.cellId) {
-      const sky = object.userData.windowMaterial as THREE.MeshBasicMaterial | null;
-      sky?.color.set(hour === 23 ? PALETTE.roof : hourLight.tint);
-    }
-  });
 
-  const ink = new InkRenderer(renderer, scene, camera);
-  ink.setMode(mode);
-  const host = document.getElementById('cells-stage')!;
-  const render = () => {
-    const width = host.clientWidth;
-    const height = host.clientHeight;
-    if (!width || !height) return;
-    renderer.setSize(width, height);
-    ink.setSize(width, height);
-    const viewHeight = rows * spacingZ + 4.4;
-    const aspect = width / height;
-    camera.left = (-viewHeight * aspect) / 2;
-    camera.right = (viewHeight * aspect) / 2;
-    camera.top = viewHeight / 2;
-    camera.bottom = -viewHeight / 2;
-    camera.updateProjectionMatrix();
-    camera.position.set(0, 16, 28);
-    camera.lookAt(0, 0.85, 0);
-    ink.render(viewHeight);
-  };
-  render();
-  window.addEventListener('resize', render);
+  for (const { cellId, scene: data, label } of samples) {
+    const tile = document.createElement('article');
+    tile.className = 'contact-tile';
+    const image = document.createElement('canvas');
+    image.width = Math.round(tileWidth * pixelRatio);
+    image.height = Math.round(tileHeight * pixelRatio);
+    image.setAttribute('aria-hidden', 'true');
+    const labelNode = document.createElement('p');
+    labelNode.className = 'contact-label';
+    labelNode.textContent = label;
+    tile.append(image, labelNode);
+    host.append(tile);
+
+    const room = buildCellRoom(data, cellId);
+    scene.add(room);
+    if (hour === 23 && room.userData.hasPendant) {
+      const pendant = new THREE.PointLight(PALETTE.light, 2.4, 5.2);
+      pendant.position.set(0, 2.35, 0);
+      room.add(pendant);
+    }
+    const sky = room.userData.windowMaterial as THREE.MeshBasicMaterial | null;
+    sky?.color.set(hour === 23 ? PALETTE.roof : hourLight.tint);
+    configureStageCamera(camera, tileWidth, tileHeight);
+    ink.render(STAGE_CAMERA.finalHeight);
+    const context = image.getContext('2d');
+    if (!context) throw new Error('Could not create a contact-sheet canvas context.');
+    context.drawImage(renderer.domElement, 0, 0, image.width, image.height);
+    scene.remove(room);
+    disposeGroup(room);
+  }
+
+  ink.dispose();
+  renderer.dispose();
   (window as Window & { __cellsReady?: boolean }).__cellsReady = true;
 }
 

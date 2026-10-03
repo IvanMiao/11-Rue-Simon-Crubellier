@@ -21,6 +21,18 @@ export const PALETTE = {
   accent: '#c8372d',
   linen: '#f7f1e3',
   green: '#4e8f5a',
+  castWallSand: '#d9c79c',
+  castFloorOchre: '#9b6a3c',
+  castWallMint: '#dfe3d6',
+  castFloorTaupe: '#8f7a5e',
+  castWallStone: '#d8d2bd',
+  castFloorRust: '#a7643c',
+  castWallSage: '#cfd8bf',
+  castFloorChestnut: '#8f5b3a',
+  castWallCream: '#e6dcc3',
+  castFloorHoney: '#b88a5a',
+  castWallRose: '#f0d0bd',
+  castFloorMahogany: '#7f4a3a',
 } as const;
 
 /** Tones for the A2 cast and card glyphs (skin, hair, cloth). Cast specs in art/cast.ts reference these. */

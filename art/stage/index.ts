@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { InkRenderer, type InkMode } from '../inkPass';
 import { HOUR_LIGHT, LIGHT_2000, PALETTE, TYPE } from '../palette';
 import { buildCellRoom } from './cellRooms';
+import { configureStageCamera, setStageCameraFrustum, STAGE_CAMERA } from './camera';
 import { anchorFor, cellScene, type CellScene } from './cellScenes';
 
 export type { CellScene, CellRoomKind } from './cellScenes';
@@ -44,11 +45,11 @@ function tagTexture(hotspot: StageHotspot, highlighted: boolean) {
   canvas.width = canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
   ctx.save();
-  ctx.shadowColor = hotspot.status === 'open' ? PALETTE.light : PALETTE.ink;
-  ctx.shadowBlur = hotspot.status === 'open' ? 24 : 7;
+  ctx.shadowColor = highlighted || hotspot.status === 'open' ? PALETTE.light : PALETTE.ink;
+  ctx.shadowBlur = highlighted ? 32 : hotspot.status === 'open' ? 18 : 7;
   ctx.fillStyle = PALETTE.paper;
   ctx.strokeStyle = highlighted ? PALETTE.accent : PALETTE.ink;
-  ctx.lineWidth = highlighted ? 7 : 4;
+  ctx.lineWidth = highlighted ? 8 : 5;
   ctx.beginPath();
   ctx.moveTo(22, 12);
   ctx.lineTo(108, 19);
@@ -58,8 +59,8 @@ function tagTexture(hotspot: StageHotspot, highlighted: boolean) {
   ctx.fill();
   ctx.stroke();
   ctx.restore();
-  ctx.fillStyle = hotspot.status === 'open' ? PALETTE.ink : PALETTE.woodDark;
-  ctx.font = `bold ${highlighted ? 66 : 58}px ${TYPE.mono}`;
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = `900 ${highlighted ? 86 : 78}px ${TYPE.display}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(statusGlyph[hotspot.status] ?? tagGlyph[hotspot.kind], 66, 63);
@@ -97,6 +98,7 @@ function makeTag(hotspot: StageHotspot, index: number, cellId: string, highlight
   const group = new THREE.Group();
   group.userData.lineId = hotspot.lineId;
   const [x, y, z] = anchorFor(cellId, hotspot.lineId, index);
+  group.userData.anchor = new THREE.Vector3(x, y, z);
   group.position.set(x, y, z);
   group.userData.noInk = true;
   const map = tagTexture(hotspot, highlighted);
@@ -108,11 +110,11 @@ function makeTag(hotspot: StageHotspot, index: number, cellId: string, highlight
     opacity: highlighted ? 1 : 0.92,
   });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(highlighted ? 0.52 : 0.4, highlighted ? 0.52 : 0.4, 1);
   sprite.renderOrder = 1000;
   sprite.userData.lineId = hotspot.lineId;
   sprite.userData.hotspot = hotspot;
   sprite.userData.noInk = true;
+  sprite.userData.highlighted = highlighted;
   group.add(sprite);
   return { group, sprite };
 }
@@ -126,10 +128,7 @@ export function mountStage(
   scene.background = new THREE.Color(PALETTE.paper);
   const overlayScene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(-2.3, 2.3, 2.3, -2.3, 0.1, 80);
-  const cameraTarget = new THREE.Vector3(4.8, 4.5, 6.8);
-  const lookAt = new THREE.Vector3(0, 1.1, 0);
-  camera.position.copy(cameraTarget);
-  camera.lookAt(lookAt);
+  configureStageCamera(camera, 1, 1);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -165,6 +164,43 @@ export function mountStage(
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
   const size = { w: 1, h: 1 };
+
+  function layoutTags() {
+    if (tagGroup.children.length === 0 || size.h <= 0) return;
+    camera.updateMatrixWorld();
+    const worldPerPixel = (camera.top - camera.bottom) / size.h;
+    const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    const placed: { x: number; y: number; size: number }[] = [];
+
+    for (const group of tagGroup.children) {
+      const anchor = group.userData.anchor as THREE.Vector3;
+      const sprite = group.children[0] as THREE.Sprite;
+      const tagSize = 30 * (sprite.userData.highlighted ? 1.3 : 1);
+      let offset = 0;
+      let candidate = anchor.clone();
+      let point = candidate.clone().project(camera);
+      let x = ((point.x + 1) * size.w) / 2;
+      let y = ((1 - point.y) * size.h) / 2;
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        candidate = anchor.clone().addScaledVector(screenUp, offset * worldPerPixel);
+        point = candidate.clone().project(camera);
+        x = ((point.x + 1) * size.w) / 2;
+        y = ((1 - point.y) * size.h) / 2;
+        const overlaps = placed.some(
+          (other) =>
+            Math.abs(x - other.x) < (tagSize + other.size) / 2 + 4 &&
+            Math.abs(y - other.y) < (tagSize + other.size) / 2 + 4
+        );
+        if (!overlaps) break;
+        offset += tagSize + 4;
+      }
+
+      group.position.copy(candidate);
+      sprite.scale.set(tagSize * worldPerPixel, tagSize * worldPerPixel, 1);
+      placed.push({ x, y, size: tagSize });
+    }
+  }
 
   const pick = (event: PointerEvent) => {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -225,18 +261,13 @@ export function mountStage(
     room = buildCellRoom(data, cellId);
     scene.add(room);
     if (animate) {
-      camera.zoom = 1;
-      camera.left = -4.6;
-      camera.right = 4.6;
-      camera.top = 4.6;
-      camera.bottom = -4.6;
-      camera.updateProjectionMatrix();
-      const finalHeight = 4.6;
+      const startHeight = STAGE_CAMERA.finalHeight * STAGE_CAMERA.introScale;
+      setStageCameraFrustum(camera, size.w, size.h, startHeight);
       camera.userData = {
         started: performance.now(),
         duration: 700,
-        startHeight: finalHeight * 2.2,
-        endHeight: finalHeight,
+        startHeight,
+        endHeight: STAGE_CAMERA.finalHeight,
       };
     }
     updateLighting(currentInput);
@@ -272,16 +303,11 @@ export function mountStage(
       const t = Math.min(1, (performance.now() - animation.started) / animation.duration);
       const eased = 1 - Math.pow(1 - t, 3);
       const height = animation.startHeight + (animation.endHeight - animation.startHeight) * eased;
-      const half = height / 2;
-      const aspect = size.w / size.h;
-      camera.left = -half * aspect;
-      camera.right = half * aspect;
-      camera.top = half;
-      camera.bottom = -half;
-      camera.updateProjectionMatrix();
+      setStageCameraFrustum(camera, size.w, size.h, height);
       if (t >= 1) camera.userData = {};
     }
     if (hovered) renderer.domElement.style.cursor = 'pointer';
+    layoutTags();
     ink.render(camera.top - camera.bottom);
     if (tagGroup.children.length > 0) {
       const autoClear = renderer.autoClear;
@@ -321,10 +347,8 @@ export function mountStage(
       size.h = h;
       renderer.setSize(w, h, false);
       ink.setSize(w, h);
-      const half = (camera.top - camera.bottom) / 2 || 2.3;
-      camera.left = -half * (w / h);
-      camera.right = half * (w / h);
-      camera.updateProjectionMatrix();
+      const viewHeight = camera.top - camera.bottom || STAGE_CAMERA.finalHeight;
+      setStageCameraFrustum(camera, w, h, viewHeight);
     },
     dispose() {
       if (disposed) return;

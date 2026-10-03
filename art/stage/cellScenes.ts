@@ -29,7 +29,7 @@ export interface CellScene {
 export const CELL_ROOM = { W: 3.4, H: 3, D: 3.2 };
 
 export const ANCHORS: Record<string, [number, number, number]> = {
-  'ev-stair-notebook': [-0.72, 0.16, 0.7],
+  'ev-stair-notebook': [0.18, 0.5, 0.7],
   'ev-hall-mailboxes': [0, 1.28, -1.34],
   'ev-hall-lift': [0.86, 1.12, -1.22],
   'ev-bb-puzzle': [-0.1, 0.8, -0.1],
@@ -89,9 +89,11 @@ export function cellScene(cellId: string): CellScene {
       seed: hash(cellId),
     };
   }
-  if (apartmentId === 'STAIRS') return scene('stair', cellId, apartmentId);
+  if (apartmentId === 'STAIRS') {
+    return { ...scene('stair', cellId, apartmentId), wall: PALETTE.plaster, floor: PALETTE.paperDeep };
+  }
   if (cellId === '0:6' || cellId === '0:7' || apartmentId === '0-5') {
-    return scene('hall', cellId, apartmentId);
+    return { ...scene('hall', cellId, apartmentId), wall: PALETTE.plaster, floor: PALETTE.paperDeep };
   }
   if (apartmentId === '0-4') return scene('loge', cellId, apartmentId, 'nochere');
   if (apartmentId === '3-1') {
@@ -104,7 +106,7 @@ export function cellScene(cellId: string): CellScene {
   if (apartmentId === '-1-3') return scene('boiler', cellId, apartmentId);
   if (apartmentId === '0-3') return scene('shop', cellId, apartmentId);
   if (apartmentId === '6-1') return scene('archive', cellId, apartmentId);
-  return scene('empty', cellId, apartmentId);
+  return { ...scene('empty', cellId, apartmentId), wall: PALETTE.plaster, floor: PALETTE.paperDeep };
 }
 
 export function anchorFor(cellId: string, lineId: string, index: number): [number, number, number] {

@@ -144,12 +144,55 @@ function smallBook(g: THREE.Group, x: number, y: number, z: number, color: strin
 
 function openBook(g: THREE.Group, x: number, y: number, z: number) {
   const book = new THREE.Group();
-  box(book, 0.48, 0.035, 0.34, TONES.leather, 0, 0, 0);
-  box(book, 0.21, 0.012, 0.29, PALETTE.linen, -0.115, 0.025, 0);
-  box(book, 0.21, 0.012, 0.29, PALETTE.paper, 0.115, 0.025, 0);
-  box(book, 0.018, 0.016, 0.31, PALETTE.woodDark, 0, 0.028, 0);
+  box(book, 1.08, 0.04, 0.56, TONES.leather, 0, 0, 0);
+  box(book, 0.52, 0.015, 0.52, PALETTE.linen, -0.27, 0.028, 0);
+  box(book, 0.52, 0.015, 0.52, PALETTE.linen, 0.27, 0.028, 0);
+  box(book, 0.035, 0.02, 0.53, PALETTE.woodDark, 0, 0.031, 0);
+  const sketch = roomCanvas(300, 320, (ctx) => {
+    ctx.fillStyle = PALETTE.linen;
+    ctx.fillRect(0, 0, 300, 320);
+    ctx.strokeStyle = PALETTE.ink;
+    ctx.globalAlpha = 0.82;
+    ctx.lineWidth = 8;
+    for (let i = 0; i <= 4; i += 1) {
+      const x = 28 + (i * 244) / 4;
+      const y = 28 + (i * 264) / 4;
+      ctx.beginPath();
+      ctx.moveTo(x, 28);
+      ctx.lineTo(x, 292);
+      ctx.moveTo(28, y);
+      ctx.lineTo(272, y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(42, 274);
+    ctx.lineTo(82, 211);
+    ctx.lineTo(122, 250);
+    ctx.lineTo(163, 119);
+    ctx.lineTo(204, 183);
+    ctx.lineTo(258, 64);
+    ctx.stroke();
+  });
+  const sketchPage = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.51, 0.5),
+    new THREE.MeshBasicMaterial({ map: texture(sketch), side: THREE.DoubleSide })
+  );
+  sketchPage.rotation.x = -Math.PI / 2 + 0.55;
+  sketchPage.position.set(-0.27, 0.22, 0);
+  sketchPage.userData.noInk = true;
+  book.add(sketchPage);
+  const rightPage = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.51, 0.5),
+    new THREE.MeshBasicMaterial({ color: PALETTE.linen, side: THREE.DoubleSide })
+  );
+  rightPage.rotation.x = -Math.PI / 2 + 0.55;
+  rightPage.position.set(0.27, 0.22, 0);
+  rightPage.userData.noInk = true;
+  book.add(rightPage);
   book.position.set(x, y, z);
-  book.rotation.z = -0.15;
+  book.rotation.y = -0.15;
   g.add(book);
 }
 

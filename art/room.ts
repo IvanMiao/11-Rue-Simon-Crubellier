@@ -387,23 +387,33 @@ export function lightBeam(): THREE.Group {
   const bottom = top.map(project);
   const positions: number[] = [];
   const ts: number[] = [];
+  const cross: number[] = [];
   for (let i = 0; i < 4; i++) {
     const a = top[i];
     const b = top[(i + 1) % 4];
     const c = bottom[(i + 1) % 4];
     const d = bottom[i];
-    for (const [p, t] of [[a, 0], [b, 0], [c, 1], [a, 0], [c, 1], [d, 1]] as [THREE.Vector3, number][]) {
+    for (const [p, t, edge] of [
+      [a, 0, 0],
+      [b, 0, 1],
+      [c, 1, 1],
+      [a, 0, 0],
+      [c, 1, 1],
+      [d, 1, 0],
+    ] as [THREE.Vector3, number, number][]) {
       positions.push(p.x, p.y, p.z);
       ts.push(t);
+      cross.push(edge);
     }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('t', new THREE.Float32BufferAttribute(ts, 1));
+  geo.setAttribute('cross', new THREE.Float32BufferAttribute(cross, 1));
   const mat = new THREE.ShaderMaterial({
     uniforms: { color: { value: new THREE.Color(PALETTE.light) }, opacity: { value: LIGHT_2000.beamOpacity } },
-    vertexShader: 'attribute float t; varying float vT; void main(){ vT = t; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: 'uniform vec3 color; uniform float opacity; varying float vT; void main(){ gl_FragColor = vec4(color, opacity * (1.0 - vT) * (1.0 - vT)); }',
+    vertexShader: 'attribute float t; attribute float cross; varying float vT; varying float vCross; void main(){ vT = t; vCross = cross; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform vec3 color; uniform float opacity; varying float vT; varying float vCross; void main(){ float edge = smoothstep(0.0, 0.18, vCross) * smoothstep(0.0, 0.18, 1.0 - vCross); gl_FragColor = vec4(color, opacity * (1.0 - vT) * (1.0 - vT) * edge); }',
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
