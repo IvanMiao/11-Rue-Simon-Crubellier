@@ -149,6 +149,10 @@ export const getReachableRooms = (
     return { walk, knight, elevator, all };
   }
 
+  if (currentRoomId === '100-1') {
+    walk.add('0-5');
+  }
+
   getAdjacentRooms(currentRoomId).forEach((id) => walk.add(id));
   getSameFloorNeighbors(currentRoomId).forEach((id) => walk.add(id));
   getValidKnightMoves(currentRoomId).forEach((id) => knight.add(id));

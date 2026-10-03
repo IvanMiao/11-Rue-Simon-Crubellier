@@ -39,6 +39,16 @@ const CaseFile: React.FC<CaseFileProps> = ({ isOpen, onClose, state, onInternali
             <h3 className="font-typewriter text-sm font-bold uppercase border-b-2 border-stone-800 mb-4 pb-2">
               已知线索
             </h3>
+            {state.storyBible?.investigator_hook && (
+              <div className="mb-5 border-l-2 border-stone-300 bg-white/70 px-4 py-3">
+                <div className="font-typewriter text-[10px] uppercase tracking-widest text-stone-400 mb-1">
+                  委托
+                </div>
+                <p className="font-serif text-sm text-stone-600">
+                  {state.storyBible.investigator_hook}
+                </p>
+              </div>
+            )}
             {state.discoveredFacts.length === 0 ? (
               <p className="font-serif italic text-stone-500">案卷还是空的。去碰一碰那些不肯被列举的物件。</p>
             ) : (
@@ -74,6 +84,13 @@ const CaseFile: React.FC<CaseFileProps> = ({ isOpen, onClose, state, onInternali
                         <li key={i}>· {c}</li>
                       ))}
                     </ul>
+                    {thread.rumors.length > 0 && (
+                      <ul className="mt-3 border-t border-stone-100 pt-2 text-xs italic text-stone-400 space-y-1">
+                        {thread.rumors.map((rumor, i) => (
+                          <li key={i}>· {rumor}</li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 ))}
               </div>

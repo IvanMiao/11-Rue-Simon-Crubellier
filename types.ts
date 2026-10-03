@@ -136,6 +136,7 @@ export interface PlotThreadState {
   summary: string;
   status: 'unknown' | 'rumored' | 'active' | 'resolved';
   clues: string[];
+  rumors: string[];
 }
 
 export interface Thought {
@@ -194,6 +195,7 @@ export interface PlayerState {
   plotThreads: PlotThreadState[];
   thoughts: Thought[];
   discoveredFacts: string[];
+  finaleFactsAtAttempt?: number;
   checkLog: CheckLogEntry[];
   xp: number;
   pendingSkillPoints: number;

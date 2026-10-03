@@ -25,9 +25,10 @@ import {
   StoryPlotThread,
   Thought,
 } from '../types';
+import { FINALE_INTERACTION, sanitizeRoomContent } from './fallbackContent';
 
 export const INITIAL_PLAYER_STATE: PlayerState = {
-  version: 3,
+  version: 4,
   runSeed: 0,
   runStatus: 'creating',
   minutesPastEight: 0,
@@ -76,6 +77,7 @@ export function normalizePlotThreads(threads: StoryPlotThread[]): PlotThreadStat
     summary: thread.summary,
     status: 'unknown' as const,
     clues: [],
+    rumors: [],
   }));
 }
 
@@ -103,7 +105,7 @@ export function beginRun(
     currentRoomId: '0-5',
     plotThreads: normalizePlotThreads(bible.plot_threads || []),
     thoughts: thoughtsFromBible(bible),
-    discoveredFacts: bible.investigator_hook ? [bible.investigator_hook] : [],
+    discoveredFacts: [],
   };
 }
 
@@ -143,26 +145,49 @@ export function skillValue(state: PlayerState, skill: SkillId): number {
 }
 
 export function cacheRoom(state: PlayerState, roomId: string, content: NarrativeResponse): PlayerState {
+  const sanitizedContent = sanitizeRoomContent(roomId, content);
   const isNew = !state.visitedRooms[roomId];
   let next = {
     ...state,
     visitedRooms: {
       ...state.visitedRooms,
-      [roomId]: content,
+      [roomId]: sanitizedContent,
     },
     roomsVisitedCount: isNew ? state.roomsVisitedCount + 1 : state.roomsVisitedCount,
   };
   if (isNew) next = grantXp(next, 1);
 
-  if (content.plot_updates?.length) {
-    next = applyPlotUpdates(next, content.plot_updates);
+  if (sanitizedContent.plot_updates?.length) {
+    let plotThreads = next.plotThreads.map((thread) => ({
+      ...thread,
+      clues: [...thread.clues],
+      rumors: [...thread.rumors],
+    }));
+    sanitizedContent.plot_updates.forEach((update) => {
+      if (!update.clue) return;
+      let thread = plotThreads.find((candidate) => candidate.id === update.thread_id);
+      if (!thread) {
+        thread = {
+          id: update.thread_id,
+          title: update.thread_id,
+          summary: '',
+          status: 'unknown',
+          clues: [],
+          rumors: [],
+        };
+        plotThreads = [...plotThreads, thread];
+      }
+      if (thread.status === 'unknown') thread.status = 'rumored';
+      if (!thread.rumors.includes(update.clue)) thread.rumors.push(update.clue);
+    });
+    next = { ...next, plotThreads };
   }
-  if (content.offered_thought) {
-    const exists = next.thoughts.some((t) => t.id === content.offered_thought!.id);
+  if (sanitizedContent.offered_thought) {
+    const exists = next.thoughts.some((t) => t.id === sanitizedContent.offered_thought!.id);
     if (!exists) {
       next = {
         ...next,
-        thoughts: [...next.thoughts, { ...content.offered_thought, internalized: false }],
+        thoughts: [...next.thoughts, { ...sanitizedContent.offered_thought, internalized: false }],
       };
     }
   }
@@ -173,7 +198,11 @@ export function applyPlotUpdates(
   state: PlayerState,
   updates: { thread_id: string; clue: string }[]
 ): PlayerState {
-  let plotThreads = state.plotThreads.map((t) => ({ ...t, clues: [...t.clues] }));
+  let plotThreads = state.plotThreads.map((t) => ({
+    ...t,
+    clues: [...t.clues],
+    rumors: [...t.rumors],
+  }));
   const discoveredFacts = [...state.discoveredFacts];
 
   updates.forEach((update) => {
@@ -186,6 +215,7 @@ export function applyPlotUpdates(
         summary: '',
         status: 'rumored',
         clues: [],
+        rumors: [],
       };
       plotThreads = [...plotThreads, thread];
     }
@@ -301,7 +331,12 @@ export function applyCheckToState(
     ]);
   }
 
-  if (result.success && extras?.resolves_mystery) {
+  if (
+    result.success &&
+    extras?.resolves_mystery &&
+    roomId === '100-1' &&
+    interactionId === FINALE_INTERACTION.id
+  ) {
     next = { ...next, runStatus: 'solved' };
   }
 
