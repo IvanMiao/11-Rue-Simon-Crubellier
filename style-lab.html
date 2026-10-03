@@ -24,6 +24,9 @@
       .views { top: 22px; right: 22px; display: flex; }
       button { background: var(--paper); color: var(--ink); border: 0; border-right: 1.5px solid var(--ink); padding: 9px 16px; font-size: 12px; letter-spacing: 0.18em; cursor: pointer; }
       button:last-child { border-right: 0; }
+      .views button:last-of-type { border-right: 0; }
+      .views a { display: inline-flex; align-items: center; padding: 9px 16px; border-left: 1.5px solid var(--ink); color: var(--ink); font-family: 'Courier Prime', monospace; font-size: 12px; letter-spacing: 0.18em; text-decoration: none; }
+      .views a:hover, .views a:focus-visible { background: var(--ink); color: var(--paper); }
       button.on { background: var(--ink); color: var(--paper); }
       .legend { top: 74px; right: 22px; justify-content: flex-end; padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: 330px; font-size: 10px; }
       .legend i { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--ink); margin-right: 5px; vertical-align: -2px; }
@@ -37,9 +40,9 @@
       <h1 id="title">III · 巴特尔布思的工作室</h1>
       <div class="meta" id="meta">1975 年 6 月 23 日 · 20:00 · 时间静止</div>
     </header>
-    <nav class="card views"><button data-view="room" class="on">1 房间</button><button data-view="section">2 剖面</button></nav>
+    <nav class="card views"><button data-view="room" class="on">1 房间</button><button data-view="section">2 剖面</button><a href="/cast.html">3 演员表</a><button data-view="props">4 道具库</button></nav>
     <aside class="card legend" id="legend"></aside>
-    <footer class="card tag">A1 风格测试 · 纸剧场 × 清线档案</footer>
+    <footer class="card tag">A2 风格测试 · 纸剧场 × 清线档案</footer>
     <script type="module" src="/art/styleLab.ts"></script>
   </body>
 </html>

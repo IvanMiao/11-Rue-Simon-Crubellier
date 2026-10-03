@@ -23,26 +23,38 @@ export const PALETTE = {
   green: '#4e8f5a',
 } as const;
 
-export interface Resident {
-  id: string;
-  name: string;
-  coat: string;
-  trousers: string;
-  hair: string;
-  skin: string;
-  wall: string;
-  floor: string;
-}
-
-// One signature colour per resident; it is the coat, the window glow and the clue-card tint.
-export const RESIDENTS: Record<string, Resident> = {
-  bartlebooth: { id: 'bartlebooth', name: '巴特尔布思', coat: '#24356b', trousers: '#3b3a45', hair: '#e8e4da', skin: '#f2c49b', wall: PALETTE.wall, floor: PALETTE.floor },
-  winckler: { id: 'winckler', name: '温克勒', coat: '#b5762a', trousers: '#4a3d33', hair: '#9a9a9a', skin: '#eab48c', wall: '#d9c79c', floor: '#9b6a3c' },
-  valene: { id: 'valene', name: '瓦莱纳', coat: '#7a4c7a', trousers: '#2f2f3a', hair: '#f0f0f0', skin: '#efbf97', wall: '#e6dcc3', floor: '#b88a5a' },
-  smautf: { id: 'smautf', name: '斯莫特', coat: '#4e8f5a', trousers: '#2b3a2f', hair: '#3b2a20', skin: '#d9a47c', wall: '#cfd8bf', floor: '#8f5b3a' },
-  marquiseau: { id: 'marquiseau', name: '马基索夫人', coat: '#b4505c', trousers: '#3d2b30', hair: '#7a3b20', skin: '#f3c7a2', wall: '#f0d0bd', floor: '#7f4a3a' },
-  concierge: { id: 'concierge', name: '诺谢尔太太', coat: '#2e6fa3', trousers: '#26303b', hair: '#5b4636', skin: '#e9b58f', wall: '#d8d2bd', floor: '#a7643c' },
-};
+/** Tones for the A2 cast and card glyphs (skin, hair, cloth). Cast specs in art/cast.ts reference these. */
+export const TONES = {
+  skinPale: '#f2c49b',
+  skinWarm: '#eab48c',
+  skinRuddy: '#e9a982',
+  skinOlive: '#d9a47c',
+  hairWhite: '#ece8de',
+  hairGrey: '#9a9a9a',
+  hairAuburn: '#7a3b20',
+  hairBrown: '#5b4636',
+  navy: '#24356b',
+  ochre: '#b5762a',
+  aubergine: '#7a4c7a',
+  bottle: '#4e8f5a',
+  rose: '#b4505c',
+  cobalt: '#2e6fa3',
+  labWhite: '#eef0ea',
+  charcoal: '#3b3a45',
+  umber: '#4a3d33',
+  leather: '#7b4a2a',
+  apron: '#f4efe2',
+  coal: '#2b2826',
+  steel: '#8d97a3',
+  bandage: '#f6f3ea',
+  sepia: '#b89a6e',
+  glass: '#bcd6dc',
+  slate: '#26303b',
+  pine: '#2b3a2f',
+  graphite: '#2f2f3a',
+  plum: '#3d2b30',
+  scarf: '#c8372d',
+} as const;
 
 export const LINE = {
   /** Ink outline width in CSS pixels. */

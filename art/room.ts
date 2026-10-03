@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { LIGHT_2000, PALETTE, RESIDENTS, Resident } from './palette';
+import { LIGHT_2000, PALETTE } from './palette';
+import { CAST, CastMember } from './cast';
 import { inkMaterial, sectionBox, toonMaterial } from './materials';
 import {
   bookSpinesTexture,
@@ -12,7 +13,9 @@ import {
   wallpaperTexture,
   woodFloorTexture,
 } from './textures';
-import { Pose, figureCanvas, paperCutout } from './figures';
+import { FIGURE_WORLD_H, figureCanvas, paperCutout } from './figures';
+import { armchair, bentwoodChair, dustSheet, stackedFrames, turnedTable, wardrobe } from './props';
+import { bustCanvas } from './draw/people';
 import { knightPiece } from './knight';
 import { mulberry32 } from '../utils/rng';
 
@@ -24,8 +27,7 @@ export type RoomKind = 'atelier' | 'workshop' | 'studio' | 'servant' | 'parlor' 
 export interface RoomSpec {
   kind: RoomKind;
   label: string;
-  resident?: Resident;
-  pose?: Pose;
+  resident?: CastMember;
   seed: number;
 }
 
@@ -155,20 +157,23 @@ function shell(g: THREE.Group, spec: RoomSpec) {
 }
 
 function table(g: THREE.Group, x: number, z: number, w: number, d: number, color: string, h = 0.78) {
-  box(g, w, 0.07, d, color, x, h, z);
-  box(g, w - 0.12, 0.1, d - 0.12, shadeHex(color, -0.12), x, h - 0.08, z);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, 0.07, h - 0.04, 0.07, shadeHex(color, -0.15), x + sx * (w / 2 - 0.08), (h - 0.04) / 2, z + sz * (d / 2 - 0.08));
+  const t = turnedTable({ w, d, h, color });
+  t.position.set(x, 0, z);
+  g.add(t);
 }
 
 function chair(g: THREE.Group, x: number, z: number, rotY: number, color: string) {
-  const c = new THREE.Group();
-  box(c, 0.46, 0.05, 0.44, color, 0, 0.46, 0);
-  box(c, 0.46, 0.5, 0.05, color, 0, 0.74, -0.2);
-  box(c, 0.36, 0.08, 0.02, shadeHex(color, 0.15), 0, 0.86, -0.18);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(c, 0.045, 0.46, 0.045, shadeHex(color, -0.15), sx * 0.2, 0.23, sz * 0.19);
+  const c = bentwoodChair({ color });
   c.position.set(x, 0, z);
   c.rotation.y = rotY;
   g.add(c);
+}
+
+function place(g: THREE.Group, o: THREE.Object3D, x: number, z: number, rotY = 0) {
+  o.position.set(x, 0, z);
+  o.rotation.y = rotY;
+  g.add(o);
+  return o;
 }
 
 function bookshelf(g: THREE.Group, x: number, z: number, w: number, h: number, seed: number, rotY = Math.PI / 2) {
@@ -195,8 +200,8 @@ function framed(g: THREE.Group, tex: THREE.Texture, w: number, h: number, x: num
   texturedPlane(g, tex, w, h, x, y, z + 0.062);
 }
 
-function figure(g: THREE.Group, r: Resident, pose: Pose, x: number, z: number, mirror = false, height = 1.72) {
-  const f = paperCutout(figureCanvas(r, pose), height, { mirror });
+function figure(g: THREE.Group, r: CastMember, x: number, z: number, mirror = false) {
+  const f = paperCutout(figureCanvas(r), FIGURE_WORLD_H, { mirror });
   f.position.set(x, 0, z);
   f.rotation.y = mirror ? 0.12 : -0.12;
   g.add(f);
@@ -249,7 +254,7 @@ function furnish(g: THREE.Group, spec: RoomSpec) {
         const sheet = box(g, 0.5, 0.008, 0.36, i % 2 ? PALETTE.linen : '#f2e6c8', 2.0 + i * 0.08, 0.56 + i * 0.01, -1.2 + i * 0.03);
         sheet.rotation.y = (rng() - 0.5) * 0.4;
       }
-      figure(g, r!, 'reach', 0.92, 0.35, true);
+      figure(g, r!, 0.92, 0.35, true);
       const k = knightPiece(0.62);
       k.position.set(-2.25, 0.004, 1.45);
       k.rotation.y = 0.5;
@@ -263,7 +268,14 @@ function furnish(g: THREE.Group, spec: RoomSpec) {
       box(g, 2.2, 1.0, 0.03, '#d6b98a', -0.9, 1.9, -D / 2 + 0.02).castShadow = false;
       for (let i = 0; i < 7; i++) box(g, 0.04, 0.3 + rng() * 0.3, 0.03, PALETTE.ink, -1.8 + i * 0.3, 1.9, -D / 2 + 0.05);
       for (let i = 0; i < 12; i++) box(g, 0.09, 0.01, 0.09, ['#9cc6e0', '#2e6fa3', '#f5d9a8'][i % 3], -1.4 + rng() * 1.6, 0.945, -1.6 + rng() * 0.4);
-      figure(g, r!, 'stand', 0.9, 0.2, true);
+      // Winckler died in 1973: only his photograph and his empty chair are left
+      const photo = canvas(300, 300, (ctx, w, h) => {
+        ctx.fillStyle = PALETTE.paperDeep;
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(bustCanvas(r!), 0, 0, w, h);
+      });
+      framed(g, texture(photo), 0.46, 0.46, 1.45, 1.75, -D / 2);
+      chair(g, -0.5, -0.75, Math.PI + 0.25, PALETTE.woodDark);
       break;
     }
     case 'studio': {
@@ -299,7 +311,7 @@ function furnish(g: THREE.Group, spec: RoomSpec) {
         const c = box(g, 0.7, 0.9, 0.03, i % 2 ? PALETTE.linen : '#e6d7b5', -2.5 + i * 0.05, 0.45, -1.6 + i * 0.12);
         c.rotation.x = -0.12;
       }
-      figure(g, r!, 'paint', 0.55, 0.25, true);
+      figure(g, r!, 0.55, 0.25, true);
       break;
     }
     case 'servant': {
@@ -308,18 +320,18 @@ function furnish(g: THREE.Group, spec: RoomSpec) {
       box(g, 0.7, 0.12, 0.4, '#ffffff', -2.2, 0.64, -1.6);
       box(g, 1.0, 0.9, 0.06, PALETTE.woodDark, -2.2, 0.45, -1.9);
       table(g, 1.3, -1.0, 0.8, 0.6, PALETTE.wood, 0.72);
+      place(g, wardrobe({ w: 0.95, h: 1.95, color: PALETTE.woodDark }), 2.35, -1.5);
       cyl(g, 0.04, 0.05, 0.2, '#f0e2c4', 1.3, 0.86, -1.0);
-      figure(g, r!, 'tray', -0.2, 0.3);
+      figure(g, r!, -0.2, 0.3);
       break;
     }
     case 'parlor': {
-      box(g, 2.0, 0.42, 0.8, r!.coat, 0.6, 0.21, -1.4);
-      box(g, 2.0, 0.6, 0.2, shadeHex(r!.coat, -0.08), 0.6, 0.62, -1.75);
-      for (const sx of [-1, 1]) box(g, 0.2, 0.62, 0.8, shadeHex(r!.coat, -0.08), 0.6 + sx * 1.0, 0.31, -1.4);
+      place(g, armchair({ color: r!.coat }), 0.05, -1.3, 0.3);
+      place(g, armchair({ color: r!.coat }), 1.35, -1.35, -0.3);
       cyl(g, 0.02, 0.02, 1.5, PALETTE.ink, 2.3, 0.75, -1.5, 6);
       cyl(g, 0.12, 0.28, 0.3, PALETTE.linen, 2.3, 1.6, -1.5, 24);
       table(g, 0.6, -0.4, 0.9, 0.5, PALETTE.wood, 0.45);
-      figure(g, r!, 'stand', -1.2, -0.2);
+      figure(g, r!, -1.2, -0.2);
       break;
     }
     case 'kitchen': {
@@ -330,7 +342,7 @@ function furnish(g: THREE.Group, spec: RoomSpec) {
       for (let i = 0; i < 5; i++) cyl(g, 0.07, 0.07, 0.18, ['#e9d3b0', '#c96a4a', '#5d6f86'][i % 3], -2.2 + i * 0.3, 1.91, -D / 2 + 0.16);
       table(g, 0.6, -0.3, 1.4, 0.8, '#b5762a', 0.76);
       chair(g, 0.6, 0.45, Math.PI, PALETTE.woodDark);
-      figure(g, r!, 'stand', 1.9, 0.0, true);
+      figure(g, r!, 1.9, 0.0, true);
       break;
     }
     case 'stair': {
@@ -341,12 +353,12 @@ function furnish(g: THREE.Group, spec: RoomSpec) {
       break;
     }
     case 'empty': {
-      for (let i = 0; i < 4; i++) {
-        const w = 0.7 + rng() * 0.9;
-        const h = 0.5 + rng() * 0.8;
-        const s = box(g, w, h, 0.6 + rng() * 0.5, PALETTE.linen, -2.0 + i * 1.3, h / 2, -1.1 + rng() * 0.6);
-        s.rotation.y = (rng() - 0.5) * 0.5;
-      }
+      // a flat between tenants: furniture under dust sheets, frames stacked against the wall
+      const j = () => (rng() - 0.5) * 0.3;
+      place(g, dustSheet(armchair({ color: PALETTE.wood }), { hangFrom: 0.5, seed: spec.seed }), -2.0, -0.9, 0.5 + j());
+      place(g, dustSheet(turnedTable({ w: 1.2, d: 0.75 }), { hangFrom: 0.78, seed: spec.seed + 1, flare: 0.04 }), -0.2, -0.8, j());
+      place(g, dustSheet(wardrobe(), { hangFrom: 2.1, seed: spec.seed + 2, flare: 0.06 }), 2.15, -1.55, j() * 0.3);
+      place(g, stackedFrames(spec.seed), 1.0, -1.6, -0.2);
       break;
     }
   }
@@ -441,19 +453,19 @@ export interface Building {
 const LAYOUT: RoomSpec[][] = [
   // floor 4
   [
-    { kind: 'studio', label: 'IV · 瓦莱纳 · 画室', resident: RESIDENTS.valene, seed: 41 },
-    { kind: 'servant', label: 'IV · 斯莫特 · 仆人房', resident: RESIDENTS.smautf, seed: 42 },
+    { kind: 'studio', label: 'IV · 瓦莱纳 · 画室', resident: CAST.valene, seed: 41 },
+    { kind: 'servant', label: 'IV · 斯莫特 · 仆人房', resident: CAST.smautf, seed: 42 },
     { kind: 'empty', label: 'IV · 空置', seed: 43 },
   ],
   // floor 3
   [
-    { kind: 'workshop', label: 'III · 温克勒 · 拼图工坊', resident: RESIDENTS.winckler, seed: 31 },
-    { kind: 'atelier', label: 'III · 巴特尔布思 · 工作室', resident: RESIDENTS.bartlebooth, seed: 32 },
-    { kind: 'parlor', label: 'III · 马基索夫人 · 客厅', resident: RESIDENTS.marquiseau, seed: 33 },
+    { kind: 'workshop', label: 'III · 温克勒 · 拼图工坊', resident: CAST.winckler, seed: 31 },
+    { kind: 'atelier', label: 'III · 巴特尔布思 · 工作室', resident: CAST.bartlebooth, seed: 32 },
+    { kind: 'parlor', label: 'III · 马基索夫人 · 客厅', resident: CAST.marquiseau, seed: 33 },
   ],
   // floor 2
   [
-    { kind: 'kitchen', label: 'II · 诺谢尔太太 · 厨房', resident: RESIDENTS.concierge, seed: 21 },
+    { kind: 'kitchen', label: 'II · 诺谢尔太太 · 厨房', resident: CAST.nochere, seed: 21 },
     { kind: 'stair', label: 'II · 楼梯间', seed: 22 },
     { kind: 'empty', label: 'II · 空置', seed: 23 },
   ],

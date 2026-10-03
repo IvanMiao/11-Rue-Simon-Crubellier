@@ -11,6 +11,9 @@ export default defineConfig(({ command, mode }) => {
       ...(fs.existsSync(path.resolve(__dirname, 'style-lab.html'))
         ? { styleLab: path.resolve(__dirname, 'style-lab.html') }
         : {}),
+      ...(fs.existsSync(path.resolve(__dirname, 'cast.html'))
+        ? { cast: path.resolve(__dirname, 'cast.html') }
+        : {}),
     };
     return {
       server: {

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A2 · 演员表</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;900&family=Courier+Prime&display=swap" rel="stylesheet" />
+    <style>
+      :root { --ink: #1c1a19; --paper: #f3ede0; --paper-deep: #e4d9c2; --accent: #c8372d; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--paper); color: var(--ink); font-family: 'Noto Serif SC', 'Noto Serif CJK SC', serif; }
+      .page { max-width: 1600px; margin: 0 auto; padding: 28px 24px 64px; }
+      .ink-card { background: var(--paper); border: 1.5px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); }
+      .plate { padding: 16px 20px 18px; margin: 0 0 24px; }
+      .eyebrow, .subtitle, figcaption, .deceased, .prop-kind, .size-label { font-family: 'Courier Prime', monospace; }
+      .eyebrow { font-size: 11px; letter-spacing: 0.22em; opacity: 0.75; }
+      h1 { margin: 6px 0 4px; font-size: 28px; font-weight: 900; letter-spacing: 0.04em; }
+      .subtitle { margin: 0; font-size: 12px; letter-spacing: 0.08em; }
+      .subtitle::before { content: ''; display: inline-block; width: 8px; height: 8px; background: var(--accent); margin-right: 8px; vertical-align: 1px; }
+      .cast-list { display: grid; gap: 18px; }
+      .member { padding: 18px; }
+      .member-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--paper-deep); padding-bottom: 12px; margin-bottom: 16px; }
+      .member-name { margin: 0; font-size: 23px; font-weight: 600; }
+      .member-fr { margin: 3px 0 7px; font-family: 'Courier Prime', monospace; font-size: 12px; letter-spacing: 0.04em; }
+      .member-role { margin: 0; font-size: 14px; line-height: 1.6; }
+      .color-chip { display: inline-block; width: 44px; height: 26px; flex: 0 0 auto; border: 1px solid var(--ink); box-shadow: 2px 2px 0 var(--ink); }
+      .member-media { display: grid; grid-template-columns: 140px minmax(190px, 240px) 180px minmax(360px, 1fr); align-items: end; gap: 18px; }
+      figure { min-width: 0; margin: 0; }
+      figcaption { margin-bottom: 8px; font-size: 10px; letter-spacing: 0.12em; color: #625b51; }
+      .window-canvas, .bust-canvas { display: block; border: 1px solid var(--ink); }
+      .figure-canvas { display: block; max-width: 100%; object-fit: contain; object-position: bottom; }
+      .signatures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .signature { display: flex; flex-direction: column; align-items: center; text-align: center; }
+      .signature canvas { display: block; max-width: 100%; border: 1px solid var(--paper-deep); background: #f8f5ee; }
+      .signature-label { min-height: 2.5em; margin-top: 6px; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+      .deceased { margin: 10px 0 0; font-size: 10px; letter-spacing: 0.04em; color: #746b5e; }
+      .props-section { margin-top: 36px; }
+      .props-section h2 { display: inline-block; padding: 10px 14px; margin: 0 0 18px; font-size: 20px; }
+      .props-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
+      .prop-card { padding: 12px; background: #f8f5ee; border: 1px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); }
+      .prop-card h3 { min-height: 2.8em; margin: 0 0 10px; font-size: 14px; font-weight: 600; line-height: 1.4; }
+      .prop-kind { margin: -6px 0 10px; font-size: 9px; letter-spacing: 0.12em; color: #746b5e; }
+      .prop-previews { display: flex; align-items: end; gap: 14px; }
+      .prop-size { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+      .prop-size canvas { display: block; border: 1px solid var(--paper-deep); background: var(--paper); }
+      .size-label { font-size: 9px; color: #746b5e; }
+      @media (max-width: 1000px) {
+        .member-media { grid-template-columns: 140px minmax(180px, 1fr) 180px; }
+        .signatures { grid-column: 1 / -1; }
+      }
+      @media (max-width: 620px) {
+        .page { padding: 16px 12px 40px; }
+        .member { padding: 12px; }
+        .member-media { grid-template-columns: 1fr 1fr; align-items: start; }
+        .window, .full-figure, .bust { justify-self: center; }
+        .signatures { grid-column: 1 / -1; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="ink-card plate">
+        <div class="eyebrow">纸剧场 · 常住居民</div>
+        <h1>A2 · 演员表</h1>
+        <p class="subtitle">七位住户 · 每人四件套</p>
+      </header>
+      <div id="cast-list" class="cast-list"></div>
+      <section class="props-section">
+        <h2 class="ink-card">词卡 · 64 px / 32 px</h2>
+        <div id="props-grid" class="props-grid"></div>
+      </section>
+    </main>
+    <script type="module" src="/art/castSheet.ts"></script>
+  </body>
+</html>

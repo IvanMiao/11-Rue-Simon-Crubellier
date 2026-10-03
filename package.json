@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "npx --yes tsx utils/gameLogic.test.ts && npx --yes tsx engine/engine.test.ts",
+    "test": "npx --yes tsx utils/gameLogic.test.ts && npx --yes tsx engine/engine.test.ts && npx --yes tsx art/cast.test.ts",
     "sim": "npx --yes tsx scripts/sim.ts",
     "typecheck": "tsc --noEmit"
   },
