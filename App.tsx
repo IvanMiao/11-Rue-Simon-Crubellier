@@ -8,76 +8,55 @@ import CaseFile from './components/CaseFile';
 import SkillCheckModal from './components/SkillCheckModal';
 import RunEndScreen from './components/RunEndScreen';
 import {
-  RoomData,
-  PlayerState,
-  InventoryItem,
-  Interaction,
   Character,
+  Interaction,
+  NarrativeResponse,
+  PlayerState,
+  RoomData,
   SkillCheckResult,
   SkillId,
-  NarrativeResponse,
 } from './types';
-import { generateStoryBible, generateRoomDescription } from './services/geminiService';
+import { generateRoomDescription, generateStoryBible } from './services/geminiService';
 import { describeMove, getReachableRooms } from './utils/gridLogic';
-import {
-  INITIAL_PLAYER_STATE,
-  applyTime,
-  appendJournal,
-  beginRun,
-  cacheRoom,
-  collectItem,
-  consumeInteraction,
-  applyCheckToState,
-  hundredthUnlocked,
-  internalizeThought,
-  moveTimeCost,
-  skillValue,
-  spendSkillPoint,
-} from './utils/gameLogic';
-import { performSkillCheck, interactionKey } from './utils/skillCheck';
+import { hundredthUnlocked } from './utils/gameLogic';
+import { fallbackRoom } from './utils/fallbackContent';
 import { newRunSeed } from './utils/rng';
 import { BUILDING_LAYOUT } from './constants';
-import { STORAGE_KEY } from './constants/skills';
+import { Action, GameEvent } from './engine/types';
+import { useGameEngine } from './engine/useGameEngine';
+
+interface PendingCheck {
+  label: string;
+  result: SkillCheckResult;
+  roomId: string;
+  before: PlayerState;
+  events: GameEvent[];
+  rolling: boolean;
+}
 
 const App: React.FC = () => {
-  const [selectedRoom, setSelectedRoom] = useState<RoomData | null>(null);
+  const {
+    state: engineState,
+    isHydrated,
+    dispatch,
+    reset,
+    getState,
+  } = useGameEngine();
   const [isMobileMapOpen, setIsMobileMapOpen] = useState(true);
   const [isCaseOpen, setIsCaseOpen] = useState(false);
-  const [gameState, setGameState] = useState<PlayerState>(INITIAL_PLAYER_STATE);
-  const [isHydrated, setIsHydrated] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [pendingCheck, setPendingCheck] = useState<{
-    interaction: Interaction;
-    result: SkillCheckResult;
-    rolling: boolean;
-  } | null>(null);
-  const [generatingRoomId, setGeneratingRoomId] = useState<string | null>(null);
-  const generatingRef = useRef<string | null>(null);
+  const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null);
+  const [generatingRoomIds, setGeneratingRoomIds] = useState<Set<string>>(new Set());
+  const [isStartingRun, setIsStartingRun] = useState(false);
+  const generatingRef = useRef(new Set<string>());
 
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as PlayerState;
-        if (parsed.version === 3 && parsed.character && parsed.runStatus !== 'creating') {
-          setGameState(parsed);
-          if (parsed.currentRoomId) {
-            const room = BUILDING_LAYOUT.find((r) => r.id === parsed.currentRoomId) || null;
-            setSelectedRoom(room);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to load saved state', e);
-      }
-    }
-    setIsHydrated(true);
-  }, []);
+  const gameState = pendingCheck?.before || engineState;
+  const selectedRoom = useMemo(
+    () => BUILDING_LAYOUT.find((room) => room.id === gameState.currentRoomId) || null,
+    [gameState.currentRoomId]
+  );
 
-  useEffect(() => {
-    if (isHydrated) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
-    }
-  }, [gameState, isHydrated]);
+  const showToast = useCallback((message: string) => setToast(message), []);
 
   useEffect(() => {
     if (!toast) return;
@@ -85,70 +64,181 @@ const App: React.FC = () => {
     return () => window.clearTimeout(id);
   }, [toast]);
 
-  const hundredth = hundredthUnlocked(gameState);
   const reachable = useMemo(
-    () => getReachableRooms(gameState.currentRoomId, { hundredthUnlocked: hundredth }),
-    [gameState.currentRoomId, hundredth]
+    () =>
+      getReachableRooms(gameState.currentRoomId, {
+        hundredthUnlocked: hundredthUnlocked(gameState),
+      }),
+    [gameState.currentRoomId, gameState.puzzlePiecesCollected, gameState.discoveredFacts.length]
   );
 
-  const showToast = (msg: string) => setToast(msg);
+  const requestRoomContent = useCallback(
+    async (roomId: string) => {
+      if (generatingRef.current.has(roomId)) return;
+      const current = getState();
+      const room = BUILDING_LAYOUT.find((candidate) => candidate.id === roomId);
+      if (!room || current.visitedRooms[roomId] || !current.character || current.runStatus !== 'playing') {
+        return;
+      }
+
+      generatingRef.current.add(roomId);
+      setGeneratingRoomIds((previous) => new Set(previous).add(roomId));
+      let content: NarrativeResponse;
+      try {
+        content = await generateRoomDescription(room.id, room.name, {
+          historyContext: Object.entries(current.visitedRooms)
+            .slice(-5)
+            .map(
+              ([id, data]) =>
+                `Room ${id}: ${(data as NarrativeResponse).text} (Mood: ${(data as NarrativeResponse).mood})`
+            )
+            .join('\n\n'),
+          storyBible: current.storyBible,
+          inventory: current.inventory.map((item) => item.name),
+          isKnightMove: current.lastMoveKind === 'knight' || current.lastMoveWasKnightMove,
+          moveKind: current.lastMoveKind,
+          character: current.character,
+          knownClues: current.discoveredFacts,
+          plotSummary: current.plotThreads
+            .filter((thread) => thread.status !== 'unknown')
+            .map((thread) => `${thread.id}[${thread.status}]: ${thread.clues.join('; ')}`)
+            .join(' / '),
+          minutesPastEight: current.minutesPastEight,
+          morale: current.morale,
+          maxMorale: current.maxMorale,
+          seed: current.runSeed,
+        });
+      } catch (error) {
+        console.error(error);
+        content = fallbackRoom(
+          room.id,
+          room.name,
+          current.runSeed,
+          current.character,
+          current.lastMoveKind === 'knight'
+        );
+      }
+
+      const latest = getState();
+      if (
+        latest.runSeed === current.runSeed &&
+        latest.character &&
+        latest.runStatus === 'playing'
+      ) {
+        dispatch({ type: 'roomContent', roomId, content });
+      }
+      generatingRef.current.delete(roomId);
+      setGeneratingRoomIds((previous) => {
+        const next = new Set(previous);
+        next.delete(roomId);
+        return next;
+      });
+    },
+    [dispatch, getState]
+  );
+
+  const toastForEvents = useCallback(
+    (events: GameEvent[]) => {
+      const rejected = events.find((event) => event.type === 'rejected');
+      if (rejected?.type === 'rejected') {
+        showToast(rejected.reason);
+        return;
+      }
+      const ending = events.find((event) => event.type === 'runEnded');
+      if (ending?.type === 'runEnded') {
+        showToast(
+          ending.status === 'solved'
+            ? '拼图合上了。'
+            : ending.status === 'midnight'
+              ? '午夜到了。'
+              : '意志崩解了。'
+        );
+        return;
+      }
+      const check = events.find((event) => event.type === 'checkRolled');
+      if (check?.type === 'checkRolled') {
+        const finale = check.roomId === '100-1' && check.interactionId === '100-1-finale';
+        showToast(
+          check.result.success && finale
+            ? '拼图合上了。'
+            : !check.result.success
+              ? '检定失败。意志被削去一角。'
+              : events.some((event) => event.type === 'clueFound')
+                ? '新线索已收入案卷。'
+                : '检定成功。'
+        );
+        return;
+      }
+      const item = events.find((event) => event.type === 'itemCollected');
+      if (item?.type === 'itemCollected') {
+        showToast(
+          item.item.type === 'puzzle_piece'
+            ? `拼图片：${item.item.name}`
+            : `收下：${item.item.name}`
+        );
+        return;
+      }
+      if (events.some((event) => event.type === 'thoughtInternalized')) {
+        showToast('念头住进来了。时间少了二十分钟。');
+      }
+    },
+    [showToast]
+  );
+
+  const dispatchAction = useCallback(
+    (action: Action) => {
+      const before = getState();
+      const events = dispatch(action);
+      const rolledCheck = events.find((event) => event.type === 'checkRolled');
+      if (rolledCheck?.type === 'checkRolled') {
+        setPendingCheck({
+          label: rolledCheck.label,
+          result: rolledCheck.result,
+          roomId: rolledCheck.roomId,
+          before,
+          events,
+          rolling: true,
+        });
+        window.setTimeout(
+          () => setPendingCheck((current) => (current ? { ...current, rolling: false } : current)),
+          900
+        );
+      } else {
+        toastForEvents(events);
+      }
+      events.forEach((event) => {
+        if (event.type === 'needsRoomContent') void requestRoomContent(event.roomId);
+      });
+      return events;
+    },
+    [dispatch, getState, requestRoomContent, toastForEvents]
+  );
+
+  useEffect(() => {
+    const currentRoomId = engineState.currentRoomId;
+    if (
+      engineState.runStatus === 'playing' &&
+      currentRoomId &&
+      !engineState.visitedRooms[currentRoomId]
+    ) {
+      void requestRoomContent(currentRoomId);
+    }
+  }, [engineState.currentRoomId, engineState.runStatus, engineState.visitedRooms, requestRoomContent]);
 
   const startRunWithCharacter = async (character: Character) => {
     const seed = newRunSeed();
-    setGameState({
-      ...INITIAL_PLAYER_STATE,
-      runStatus: 'generating',
-      character,
-      runSeed: seed,
-    });
+    setIsStartingRun(true);
     try {
       const bible = await generateStoryBible(seed, character);
-      const started = beginRun(character, seed, bible);
-      setGameState(started);
-      const hall = BUILDING_LAYOUT.find((r) => r.id === '0-5') || null;
-      setSelectedRoom(hall);
+      dispatchAction({ type: 'startRun', character, seed, bible });
       setIsMobileMapOpen(false);
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error(error);
       showToast('故事圣经织不出来。再试一次。');
-      setGameState(INITIAL_PLAYER_STATE);
+    } finally {
+      setIsStartingRun(false);
     }
   };
-
-  const handleRequestGenerate = useCallback(
-    async (room: RoomData) => {
-      if (gameState.visitedRooms[room.id] || generatingRoomId || generatingRef.current === room.id) return;
-      generatingRef.current = room.id;
-      setGeneratingRoomId(room.id);
-      try {
-        const content = await generateRoomDescription(room.id, room.name, {
-          historyContext: Object.entries(gameState.visitedRooms)
-            .slice(-5)
-            .map(([id, data]) => `Room ${id}: ${(data as NarrativeResponse).text} (Mood: ${(data as NarrativeResponse).mood})`)
-            .join('\n\n'),
-          storyBible: gameState.storyBible,
-          inventory: gameState.inventory.map((i) => i.name),
-          isKnightMove: gameState.lastMoveKind === 'knight' || gameState.lastMoveWasKnightMove,
-          moveKind: gameState.lastMoveKind,
-          character: gameState.character,
-          knownClues: gameState.discoveredFacts,
-          plotSummary: gameState.plotThreads
-            .filter((t) => t.status !== 'unknown')
-            .map((t) => `${t.id}[${t.status}]: ${t.clues.join('; ')}`)
-            .join(' / '),
-          minutesPastEight: gameState.minutesPastEight,
-          morale: gameState.morale,
-          maxMorale: gameState.maxMorale,
-          seed: gameState.runSeed,
-        });
-        setGameState((prev) => cacheRoom(prev, room.id, content));
-      } finally {
-        generatingRef.current = null;
-        setGeneratingRoomId(null);
-      }
-    },
-    [gameState, generatingRoomId]
-  );
 
   const handleRoomSelect = (room: RoomData) => {
     if (gameState.runStatus !== 'playing') return;
@@ -158,16 +248,8 @@ const App: React.FC = () => {
       return;
     }
     if (room.id !== gameState.currentRoomId) {
-      const cost = moveTimeCost(move === 'blocked' ? 'walk' : move);
-      setGameState((prev) => ({
-        ...applyTime(prev, cost),
-        currentRoomId: room.id,
-        lastMoveWasKnightMove: move === 'knight',
-        lastMoveWasWalk: move === 'walk',
-        lastMoveKind: move === 'blocked' ? 'walk' : move,
-      }));
+      dispatchAction({ type: 'move', roomId: room.id });
     }
-    setSelectedRoom(room);
     if (window.innerWidth < 768) setIsMobileMapOpen(false);
   };
 
@@ -175,95 +257,32 @@ const App: React.FC = () => {
     showToast(`${room.name || '那个格子'}现在走不到。骑士跳会发光。`);
   };
 
-  const handleCollectItem = (item: InventoryItem) => {
-    setGameState((prev) => {
-      if (!selectedRoom) return collectItem(prev, item);
-      const room = prev.visitedRooms[selectedRoom.id];
-      const collected = collectItem(prev, item);
-      if (!room) return collected;
-      return {
-        ...collected,
-        visitedRooms: {
-          ...collected.visitedRooms,
-          [selectedRoom.id]: { ...room, collectible_item: undefined },
-        },
-      };
-    });
-    showToast(item.type === 'puzzle_piece' ? `拼图片：${item.name}` : `收下：${item.name}`);
+  const handleCollectItem = (item: { id: string }) => {
+    dispatchAction({ type: 'collect', itemId: item.id });
   };
 
   const handleInteract = (interaction: Interaction) => {
-    if (!selectedRoom || gameState.runStatus !== 'playing') return;
-    const id = interaction.id || interaction.label;
-    const key = interactionKey(selectedRoom.id, id);
-
-    if (interaction.skill && interaction.difficulty) {
-      if (interaction.kind === 'red' && gameState.attemptedRedChecks.includes(key)) return;
-      if (gameState.resolvedChecks[key] === true) return;
-
-      const result = performSkillCheck({
-        skill: interaction.skill,
-        skillValue: skillValue(gameState, interaction.skill),
-        difficulty: interaction.difficulty,
-        kind: interaction.kind,
-        seed: gameState.runSeed,
-        salt: `${key}:${gameState.checkLog.length}:${gameState.minutesPastEight}`,
-      });
-      setPendingCheck({ interaction: { ...interaction, id }, result, rolling: true });
-      window.setTimeout(() => {
-        setPendingCheck((curr) => (curr ? { ...curr, rolling: false } : curr));
-      }, 900);
-      return;
-    }
-
-    const text = interaction.response;
-    setGameState((prev) =>
-      consumeInteraction(
-        appendJournal(applyTime(prev, 5), selectedRoom.id, `> ${interaction.label}\n${text}`),
-        selectedRoom.id,
-        id
-      )
-    );
+    if (!interaction.id) return;
+    dispatchAction({ type: 'interact', interactionId: interaction.id });
   };
 
   const finishPendingCheck = () => {
-    if (!pendingCheck || !selectedRoom) return;
-    const { interaction, result } = pendingCheck;
-    const id = interaction.id || interaction.label;
-    const body = result.success
-      ? interaction.success_response || interaction.response
-      : interaction.failure_response || '什么也没有发生，只是你自己出了丑。';
-    const header = `${result.success ? '成功' : '失败'} · ${interaction.label}`;
-    setGameState((prev) =>
-      appendJournal(
-        applyCheckToState(prev, selectedRoom.id, id, interaction.label, result, {
-          clue: interaction.clue,
-          plot_flag: interaction.plot_flag,
-          morale_on_success: interaction.morale_on_success,
-          morale_on_fail: interaction.morale_on_fail,
-          resolves_mystery: interaction.resolves_mystery,
-        }),
-        selectedRoom.id,
-        `> ${header}\n${body}`
-      )
-    );
+    if (!pendingCheck) return;
+    const events = pendingCheck.events;
     setPendingCheck(null);
-    if (result.success && interaction.resolves_mystery) {
-      showToast('拼图合上了。');
-    } else if (!result.success) {
-      showToast('检定失败。意志被削去一角。');
-    }
+    toastForEvents(events);
   };
 
   const handleReset = () => {
-    if (gameState.runStatus === 'playing') {
+    if (engineState.runStatus === 'playing') {
       if (!window.confirm('放弃这一局？种子、案卷和意志都会消失。')) return;
     }
-    localStorage.removeItem(STORAGE_KEY);
-    setGameState(INITIAL_PLAYER_STATE);
-    setSelectedRoom(null);
+    reset();
+    generatingRef.current.clear();
+    setGeneratingRoomIds(new Set());
     setIsMobileMapOpen(true);
     setIsCaseOpen(false);
+    setPendingCheck(null);
   };
 
   const visitedIds = useMemo(
@@ -273,26 +292,33 @@ const App: React.FC = () => {
 
   const disabledChecks = useMemo(() => {
     if (!selectedRoom) return new Set<string>();
-    const set = new Set<string>();
+    const disabled = new Set<string>();
     const room = gameState.visitedRooms[selectedRoom.id];
-    room?.available_interactions?.forEach((it) => {
-      const id = it.id || it.label;
-      const key = interactionKey(selectedRoom.id, id);
-      if (gameState.resolvedChecks[key] === true) set.add(id);
-      if (it.kind === 'red' && gameState.attemptedRedChecks.includes(key)) set.add(id);
+    room?.available_interactions?.forEach((interaction) => {
+      const id = interaction.id || interaction.label;
+      const key = `${selectedRoom.id}::${id}`;
+      if (gameState.resolvedChecks[key] === true) disabled.add(id);
+      const finaleRearmed =
+        selectedRoom.id === '100-1' &&
+        id === '100-1-finale' &&
+        (gameState.finaleFactsAtAttempt === undefined ||
+          gameState.discoveredFacts.length > gameState.finaleFactsAtAttempt);
+      if (
+        interaction.kind === 'red' &&
+        gameState.attemptedRedChecks.includes(key) &&
+        !finaleRearmed
+      ) {
+        disabled.add(id);
+      }
     });
-    return set;
+    return disabled;
   }, [gameState, selectedRoom]);
 
   if (!isHydrated) {
     return <div className="h-screen w-screen bg-[#eae7dc]" />;
   }
 
-  if (gameState.runStatus === 'creating') {
-    return <CharacterCreate onBegin={startRunWithCharacter} />;
-  }
-
-  if (gameState.runStatus === 'generating') {
+  if (engineState.runStatus === 'creating' && isStartingRun) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#eae7dc] text-stone-800 font-typewriter">
         <div className="w-16 h-16 border-4 border-stone-800 border-t-transparent rounded-full animate-spin mb-8"></div>
@@ -300,6 +326,10 @@ const App: React.FC = () => {
         <p className="text-sm text-stone-500 animate-pulse">种子会决定谁在说谎，哪一块拼图缺席。</p>
       </div>
     );
+  }
+
+  if (engineState.runStatus === 'creating') {
+    return <CharacterCreate onBegin={startRunWithCharacter} />;
   }
 
   return (
@@ -342,8 +372,8 @@ const App: React.FC = () => {
             <NarrativePanel
               selectedRoom={selectedRoom}
               cachedContent={selectedRoom ? gameState.visitedRooms[selectedRoom.id] : undefined}
-              onRequestGenerate={handleRequestGenerate}
-              generating={generatingRoomId === selectedRoom?.id}
+              onRequestGenerate={(room) => void requestRoomContent(room.id)}
+              generating={selectedRoom ? generatingRoomIds.has(selectedRoom.id) : false}
               onInteract={handleInteract}
               onCollectItem={handleCollectItem}
               disabledChecks={disabledChecks}
@@ -359,16 +389,13 @@ const App: React.FC = () => {
         isOpen={isCaseOpen}
         onClose={() => setIsCaseOpen(false)}
         state={gameState}
-        onInternalize={(id) => {
-          setGameState((prev) => internalizeThought(prev, id));
-          showToast('念头住进来了。时间少了二十分钟。');
-        }}
-        onSpendPoint={(skill: SkillId) => setGameState((prev) => spendSkillPoint(prev, skill))}
+        onInternalize={(thoughtId) => dispatchAction({ type: 'internalize', thoughtId })}
+        onSpendPoint={(skill: SkillId) => dispatchAction({ type: 'spendPoint', skill })}
       />
 
       <SkillCheckModal
         open={!!pendingCheck}
-        label={pendingCheck?.interaction.label || ''}
+        label={pendingCheck?.label || ''}
         result={pendingCheck?.result || null}
         rolling={pendingCheck?.rolling || false}
         onFinished={finishPendingCheck}

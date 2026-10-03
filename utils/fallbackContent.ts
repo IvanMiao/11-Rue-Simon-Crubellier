@@ -86,6 +86,46 @@ export const FALLBACK_BIBLE: StoryBible = {
   ],
 };
 
+export const FINALE_INTERACTION: Interaction = {
+  id: '100-1-finale',
+  label: '把缺的那一块按进最后的空洞',
+  type: 'check',
+  skill: 'constraint',
+  difficulty: 'formidable',
+  kind: 'red',
+  response: '你举起那一块。',
+  success_response: '空洞接受了它。不是因为形状对了，是因为你允许缺口存在。整栋楼在二十点整轻轻点头。',
+  failure_response: '它滑开了。午夜更近。你还可以再找一块别的缺。',
+  plot_flag: 'thread-puzzle',
+  clue: '第一百把钥匙不是物件，是承认缺口的那一秒钟。',
+  resolves_mystery: true,
+  morale_on_fail: -1,
+};
+
+const clampMorale = (value: number | undefined): number | undefined =>
+  value === undefined || !Number.isFinite(value) ? undefined : Math.max(-1, Math.min(1, value));
+
+export function sanitizeRoomContent(roomId: string, content: NarrativeResponse): NarrativeResponse {
+  const interactions: Interaction[] = (content.available_interactions || []).map((interaction, index) => {
+    const { resolves_mystery: _resolvesMystery, ...withoutEnding } = interaction;
+    return {
+      ...withoutEnding,
+      id: interaction.id || `${roomId}-act-${index}`,
+      morale_on_success: clampMorale(interaction.morale_on_success),
+      morale_on_fail: clampMorale(interaction.morale_on_fail),
+    };
+  });
+
+  if (roomId === '100-1') {
+    const finaleIndex = interactions.findIndex((interaction) => interaction.id === FINALE_INTERACTION.id);
+    const canonicalFinale = { ...FINALE_INTERACTION };
+    if (finaleIndex >= 0) interactions[finaleIndex] = canonicalFinale;
+    else interactions.push(canonicalFinale);
+  }
+
+  return { ...content, available_interactions: interactions };
+}
+
 const OBJECT_POOL = [
   '一枚缺角的邮票',
   '半杯已经不冒热气的茶',
@@ -169,21 +209,7 @@ export function fallbackRoom(
   ];
 
   if (roomId === '100-1') {
-    interactions.push({
-      id: `${roomId}-finale`,
-      label: '把缺的那一块按进最后的空洞',
-      type: 'check',
-      skill: 'constraint',
-      difficulty: 'formidable',
-      kind: 'red',
-      response: '你举起那一块。',
-      success_response: '空洞接受了它。不是因为形状对了，是因为你允许缺口存在。整栋楼在二十点整轻轻点头。',
-      failure_response: '它滑开了。午夜更近。你还可以再找一块别的缺。',
-      plot_flag: 'thread-puzzle',
-      clue: '第一百把钥匙不是物件，是承认缺口的那一秒钟。',
-      resolves_mystery: true,
-      morale_on_fail: -1,
-    });
+    interactions.push(FINALE_INTERACTION);
   } else if (highTension) {
     interactions.push({
       id: `${roomId}-secret`,
@@ -197,7 +223,6 @@ export function fallbackRoom(
       failure_response: '图案继续重复。你怀疑是自己想看见缺口。',
       plot_flag: 'thread-puzzle',
       clue: '墙纸的缺口与拼图的缺块是同一个尺寸。',
-      resolves_mystery: false,
       morale_on_fail: -1,
     });
   }

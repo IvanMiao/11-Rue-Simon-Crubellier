@@ -48,7 +48,6 @@ const narrativeSchema = {
           clue: { type: Type.STRING },
           morale_on_success: { type: Type.NUMBER },
           morale_on_fail: { type: Type.NUMBER },
-          resolves_mystery: { type: Type.BOOLEAN }
         },
         required: ["label", "response", "type"]
       }
@@ -304,7 +303,6 @@ export const generateRoomDescription = async (
        - ALWAYS provide success_response and failure_response (different facts, not just tone)
        - On success, optionally set clue + plot_flag (thread id)
        - Failure may set morale_on_fail to -1
-       - If this room can end the mystery AND known clues are many, one legendary check may set resolves_mystery true
     5. NPCs: if a key character's home_room matches, they may be present as a frozen tableau or a voice. Include a dialogue check.
     6. Collectible: ~25%. High tension -> puzzle_piece.
     7. Rarely offer offered_thought if the room cracks the investigator's worldview.
