@@ -7,6 +7,8 @@ import HudBar from './components/HudBar';
 import CaseFile from './components/CaseFile';
 import SkillCheckModal from './components/SkillCheckModal';
 import RunEndScreen from './components/RunEndScreen';
+import Atelier from './components/world/Atelier';
+import WorldScreen from './components/world/WorldScreen';
 import {
   Character,
   Interaction,
@@ -26,6 +28,7 @@ import { Action, GameEvent } from './engine/types';
 import { useGameEngine } from './engine/useGameEngine';
 import { buildCase, caseBible } from './case/buildCase';
 import { isInteractionAvailable, roomsWithAvailableEvidence } from './engine/step';
+import { CELL_BY_ID, cellTitle } from './world/damier';
 
 interface PendingCheck {
   label: string;
@@ -53,7 +56,10 @@ const App: React.FC = () => {
 
   const gameState = pendingCheck?.before || engineState;
   const selectedRoom = useMemo(
-    () => BUILDING_LAYOUT.find((room) => room.id === gameState.currentRoomId) || null,
+    () => {
+      const cell = gameState.currentRoomId ? CELL_BY_ID[gameState.currentRoomId] : undefined;
+      return BUILDING_LAYOUT.find((room) => room.id === cell?.apartmentId) || null;
+    },
     [gameState.currentRoomId]
   );
   const caseGraph = useMemo(
@@ -85,16 +91,18 @@ const App: React.FC = () => {
     async (roomId: string) => {
       if (generatingRef.current.has(roomId)) return;
       const current = getState();
-      const room = BUILDING_LAYOUT.find((candidate) => candidate.id === roomId);
-      if (!room || current.visitedRooms[roomId] || !current.character || current.runStatus !== 'playing') {
+      const cell = CELL_BY_ID[roomId];
+      const room = BUILDING_LAYOUT.find((candidate) => candidate.id === cell?.apartmentId);
+      if (!cell || !room || current.visitedRooms[roomId] || !current.character || current.runStatus !== 'playing') {
         return;
       }
+      const roomName = cellTitle(roomId);
 
       generatingRef.current.add(roomId);
       setGeneratingRoomIds((previous) => new Set(previous).add(roomId));
       let content: NarrativeResponse;
       try {
-        content = await generateRoomDescription(room.id, room.name, {
+        content = await generateRoomDescription(roomId, roomName, {
           historyContext: Object.entries(current.visitedRooms)
             .slice(-5)
             .map(
@@ -120,8 +128,8 @@ const App: React.FC = () => {
       } catch (error) {
         console.error(error);
         content = fallbackRoom(
-          room.id,
-          room.name,
+          roomId,
+          roomName,
           current.runSeed,
           current.character,
           current.lastMoveKind === 'knight'
@@ -334,61 +342,27 @@ const App: React.FC = () => {
   }
 
   if (engineState.runStatus === 'creating') {
-    return <CharacterCreate onBegin={startRunWithCharacter} />;
+    return <Atelier onBegin={startRunWithCharacter} />;
   }
 
+  const worldDispatch = (action: Action) => {
+    const events = dispatch(action);
+    events.forEach((event) => {
+      if (event.type === 'needsRoomContent') void requestRoomContent(event.roomId);
+    });
+    return events;
+  };
+
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-stone-50 text-stone-900">
-      <HudBar
-        state={gameState}
+    <>
+      <WorldScreen
+        state={engineState}
+        graph={caseGraph}
+        generatingCellIds={generatingRoomIds}
+        dispatch={worldDispatch}
         onOpenCase={() => setIsCaseOpen(true)}
-        onOpenSheet={() => setIsCaseOpen(true)}
         onReset={handleReset}
-        onToggleMap={() => setIsMobileMapOpen(!isMobileMapOpen)}
-        isMobileMapOpen={isMobileMapOpen}
       />
-
-      <div className="flex flex-1 overflow-hidden relative">
-        <div
-          className={`
-          absolute inset-0 md:relative md:w-1/2 lg:w-5/12 xl:w-1/2 z-10
-          transition-transform duration-500 ease-in-out bg-[#eae7dc]
-          ${isMobileMapOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        `}
-        >
-          <BuildingMap
-            onRoomSelect={handleRoomSelect}
-            selectedRoomId={selectedRoom?.id || gameState.currentRoomId}
-            visitedRoomIds={visitedIds}
-            reachable={reachable}
-            caseEvidenceRoomIds={caseEvidenceRoomIds}
-            onBlocked={handleBlocked}
-          />
-        </div>
-
-        <div
-          className={`
-            absolute inset-0 md:relative md:w-1/2 lg:w-7/12 xl:w-1/2 z-0 bg-[#fdfbf7]
-            transition-transform duration-500 ease-in-out flex flex-col
-            ${!isMobileMapOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
-          `}
-        >
-          <div className="flex-1 overflow-hidden relative">
-            <NarrativePanel
-              selectedRoom={selectedRoom}
-              cachedContent={selectedRoom ? gameState.visitedRooms[selectedRoom.id] : undefined}
-              onRequestGenerate={(room) => void requestRoomContent(room.id)}
-              generating={selectedRoom ? generatingRoomIds.has(selectedRoom.id) : false}
-              onInteract={handleInteract}
-              onCollectItem={handleCollectItem}
-              disabledChecks={disabledChecks}
-            />
-          </div>
-          <div className="z-20 shrink-0">
-            <InventoryPanel items={gameState.inventory} />
-          </div>
-        </div>
-      </div>
 
       <CaseFile
         isOpen={isCaseOpen}
@@ -402,22 +376,8 @@ const App: React.FC = () => {
         onSubmitGroup={(groupId) => dispatchAction({ type: 'submitGroup', groupId })}
       />
 
-      <SkillCheckModal
-        open={!!pendingCheck}
-        label={pendingCheck?.label || ''}
-        result={pendingCheck?.result || null}
-        rolling={pendingCheck?.rolling || false}
-        onFinished={finishPendingCheck}
-      />
-
       <RunEndScreen state={gameState} onAgain={handleReset} />
-
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-stone-900 text-[#f4f1ea] px-4 py-2 font-typewriter text-xs uppercase tracking-widest shadow-lg">
-          {toast}
-        </div>
-      )}
-    </div>
+    </>
   );
 };
 

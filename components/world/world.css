@@ -1,0 +1,158 @@
+/* Valène's studio: every surface is paper, linen, card or ink. Colour variables come from art/cssTokens.ts. */
+:root {
+  --serif: 'Noto Serif SC', 'Noto Serif CJK SC', 'Lora', serif;
+  --mono: 'Courier Prime', 'DejaVu Sans Mono', monospace;
+}
+
+.world-desk {
+  background-color: var(--desk);
+  background-image:
+    repeating-linear-gradient(92deg, rgba(0, 0, 0, 0.06) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(88deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 23px),
+    radial-gradient(ellipse at 30% 20%, rgba(247, 215, 116, 0.18), transparent 60%);
+  color: var(--ink);
+  font-family: var(--serif);
+}
+
+.paper-sheet {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) inset, 6px 8px 0 rgba(20, 14, 10, 0.35), 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+.world-card {
+  background: var(--paper);
+  background-image: radial-gradient(rgba(140, 132, 122, 0.08) 1px, transparent 1px);
+  background-size: 5px 5px;
+  border: 1px solid rgba(28, 26, 25, 0.35);
+  box-shadow: 5px 6px 0 rgba(20, 14, 10, 0.35), 0 14px 30px rgba(0, 0, 0, 0.25);
+  position: relative;
+}
+.world-card::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border: 1px solid rgba(28, 26, 25, 0.18);
+  pointer-events: none;
+}
+
+.world-kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--charcoal-number);
+}
+.world-title { font-family: var(--serif); font-weight: 900; font-size: 1.9rem; line-height: 1.2; }
+.world-prose { font-family: var(--serif); line-height: 1.85; color: var(--charcoal); }
+.world-caption { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; color: rgba(247, 241, 227, 0.75); text-align: center; }
+.world-footnote { font-family: var(--mono); font-size: 11px; color: var(--charcoal-number); }
+
+.world-button {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.25em;
+  padding: 0.85rem 1rem;
+  background: var(--ink);
+  color: var(--linen);
+  border: 1px solid var(--ink);
+  box-shadow: 3px 3px 0 rgba(28, 26, 25, 0.3);
+  transition: transform 120ms, box-shadow 120ms;
+}
+.world-button:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 rgba(28, 26, 25, 0.35); }
+.world-button:disabled { opacity: 0.35; }
+.world-button-ghost { background: transparent; color: var(--ink); }
+
+.world-choice {
+  display: grid;
+  gap: 2px;
+  padding: 0.9rem 1rem;
+  background: var(--linen);
+  border: 1px solid rgba(28, 26, 25, 0.4);
+  transition: transform 120ms, box-shadow 120ms;
+}
+.world-choice:hover { transform: translate(-1px, -2px) rotate(-0.3deg); box-shadow: 3px 4px 0 rgba(28, 26, 25, 0.3); }
+.world-choice-title { font-weight: 900; font-size: 1.15rem; }
+.world-choice-sub { font-size: 0.85rem; color: var(--charcoal); }
+.world-choice-skills { font-family: var(--mono); font-size: 11px; color: var(--charcoal-number); margin-top: 4px; }
+.world-choice-blurb { font-size: 0.85rem; color: var(--charcoal); margin-top: 6px; line-height: 1.7; }
+
+/* Canvas overlay */
+.damier-cell { position: absolute; background: transparent; border: 0; padding: 0; cursor: default; outline: none; }
+.damier-cell.is-target { cursor: pointer; }
+.damier-cell.is-target:hover { background: rgba(247, 215, 116, 0.22); box-shadow: inset 0 0 0 2px rgba(28, 26, 25, 0.6); }
+.damier-cell:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.damier-cell.is-selected { box-shadow: inset 0 0 0 2px var(--accent); }
+.damier-lamp { position: absolute; inset: 0; mix-blend-mode: normal; animation: lamp 3.2s ease-in-out infinite; pointer-events: none; }
+@keyframes lamp { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+.damier-tag {
+  position: absolute; right: 4%; bottom: 6%;
+  font-family: var(--mono); font-size: clamp(8px, 0.9vw, 11px); line-height: 1;
+  padding: 2px 4px; background: var(--linen); color: var(--ink);
+  border: 1px solid rgba(28, 26, 25, 0.55); transform: rotate(-3deg);
+  box-shadow: 1px 1px 0 rgba(28, 26, 25, 0.3); pointer-events: none;
+}
+.damier-tag-knight { background: var(--brass); color: var(--ink); font-weight: 700; }
+.damier-tag-elevator { background: var(--paper-deep); }
+.damier-changed {
+  position: absolute; left: 6%; bottom: 8%; font-size: 10px; font-family: var(--serif); font-weight: 900;
+  color: var(--accent); border: 1.5px solid var(--accent); border-radius: 50%; width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center; transform: rotate(-12deg); background: rgba(247, 241, 227, 0.85);
+}
+.damier-knight { position: absolute; pointer-events: none; transition: left 260ms ease-in, top 260ms ease-out 260ms; }
+.damier-caption {
+  position: absolute; left: 50%; top: 4%; transform: translateX(-50%) rotate(-0.6deg);
+  width: min(78%, 30rem); padding: 0.7rem 1rem; background: var(--linen);
+  border: 1px solid rgba(28, 26, 25, 0.4); box-shadow: 3px 4px 0 rgba(28, 26, 25, 0.3);
+  animation: caption 7s ease-in-out forwards; pointer-events: none;
+}
+@keyframes caption { 0% { opacity: 0; transform: translate(-50%, -8px) rotate(-0.6deg); } 8%, 80% { opacity: 1; transform: translate(-50%, 0) rotate(-0.6deg); } 100% { opacity: 0; } }
+
+/* Chapter page */
+.chapter-card { animation: chapter-in 520ms cubic-bezier(.2, .8, .2, 1); }
+@keyframes chapter-in { from { opacity: 0; transform: translateY(10px) rotate(0.6deg); } to { opacity: 1; transform: none; } }
+.chapter-numeral { font-family: var(--serif); font-weight: 900; letter-spacing: 0.12em; font-size: 0.8rem; color: var(--accent); }
+.chapter-title { font-family: var(--serif); font-weight: 900; font-size: 1.8rem; line-height: 1.15; }
+
+.sheet-line { display: grid; grid-template-columns: 1.4rem 1fr auto; gap: 0.15rem 0.6rem; padding: 0.55rem 0.2rem; border-top: 1px dashed rgba(28, 26, 25, 0.25); text-align: left; width: 100%; }
+.sheet-line:hover:not(:disabled) { background: rgba(247, 215, 116, 0.18); }
+.sheet-line:disabled { cursor: default; }
+.sheet-mark { font-family: var(--mono); font-weight: 700; font-size: 1rem; line-height: 1.5rem; text-align: center; }
+.sheet-label { font-family: var(--serif); font-size: 0.98rem; line-height: 1.5rem; }
+.sheet-min { font-family: var(--mono); font-size: 11px; color: var(--charcoal-number); line-height: 1.5rem; }
+.sheet-sub { grid-column: 2 / 4; font-family: var(--mono); font-size: 11px; color: var(--charcoal-number); line-height: 1.5; }
+.sheet-line.is-done .sheet-label { text-decoration: line-through; text-decoration-thickness: 1.5px; color: var(--charcoal-number); }
+.sheet-line.is-locked .sheet-label { color: var(--charcoal-faint); }
+.sheet-line.is-locked .sheet-sub { color: var(--accent); }
+.sheet-line.is-faux .sheet-label { text-decoration: underline wavy var(--accent); text-underline-offset: 4px; }
+.sheet-manque { border-top: 1px dashed rgba(28, 26, 25, 0.25); padding: 0.55rem 0.2rem 0.55rem 2rem; font-family: var(--mono); font-size: 11px; color: var(--charcoal-faint); }
+.sheet-manque { display: flex; align-items: center; gap: 0.6rem; white-space: nowrap; }
+.sheet-manque-rule { flex: 1; border-bottom: 1.5px solid var(--charcoal-faint); }
+
+.check-slip {
+  margin: 0.2rem 0 0.6rem 1.8rem; padding: 0.8rem 0.9rem; background: var(--linen);
+  border: 1px solid rgba(28, 26, 25, 0.45); box-shadow: 3px 3px 0 rgba(28, 26, 25, 0.25);
+  transform: rotate(-0.4deg); animation: chapter-in 260ms ease-out;
+}
+.check-dice { display: flex; gap: 0.5rem; align-items: center; font-family: var(--mono); }
+.check-die { width: 2.2rem; height: 2.2rem; display: flex; align-items: center; justify-content: center; background: var(--paper); border: 1.5px solid var(--ink); font-size: 1.2rem; box-shadow: 2px 2px 0 rgba(28, 26, 25, 0.35); }
+.check-stamp { font-family: var(--serif); font-weight: 900; font-size: 1.1rem; padding: 0 0.5rem; border: 2px solid currentColor; transform: rotate(-6deg); display: inline-block; }
+
+.card-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px 2px 2px; background: var(--paper); border: 1px solid rgba(28, 26, 25, 0.35); font-family: var(--serif); font-size: 12px; margin: 2px 4px 2px 0; }
+.card-chip img { width: 20px; height: 20px; }
+
+/* Notebook */
+.notebook-tab { display: flex; align-items: center; gap: 0.7rem; padding: 0.55rem 0.9rem; background: var(--pine); color: var(--linen); border: 1px solid var(--ink); box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.35); font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; }
+.notebook-tab:hover:not(:disabled) { transform: translateY(-2px); }
+.notebook-tab.is-empty { background: transparent; color: rgba(247, 241, 227, 0.6); border-style: dashed; border-color: rgba(247, 241, 227, 0.4); box-shadow: none; }
+.notebook-cover { width: 22px; height: 28px; background: var(--graphite); border: 1px solid var(--linen); box-shadow: inset 3px 0 0 rgba(0, 0, 0, 0.35); }
+.notebook-tab.is-new { animation: notebook-in 900ms cubic-bezier(.2, .9, .2, 1.2); }
+@keyframes notebook-in { 0% { transform: translate(40vw, -40vh) rotate(-30deg) scale(1.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.card-arrival { animation: card-fly 4.2s ease-in-out forwards; }
+@keyframes card-fly { 0% { opacity: 0; transform: translate(30vw, -30vh) rotate(8deg); } 14% { opacity: 1; transform: translate(0, 0) rotate(-2deg); } 82% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(16px) scale(0.9); } }
+
+.hud-strip { display: flex; align-items: center; gap: 1rem; color: var(--linen); font-family: var(--mono); font-size: 12px; }
+.hud-clock { display: flex; align-items: center; gap: 0.5rem; }
+.hud-stamp { width: 12px; height: 12px; border: 1.5px solid var(--linen); transform: rotate(45deg); display: inline-block; }
+.hud-stamp.is-on { background: var(--accent); border-color: var(--accent); }
+.world-toast { position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%) rotate(-0.5deg); z-index: 60; padding: 0.55rem 1rem; background: var(--linen); color: var(--ink); border: 1px solid var(--ink); box-shadow: 3px 3px 0 rgba(28, 26, 25, 0.35); font-family: var(--mono); font-size: 12px; }
+.damier-lamp-bulb { position: absolute; left: 50%; top: 12%; width: 18%; aspect-ratio: 1; transform: translateX(-50%); border-radius: 50%; background: var(--light); border: 1.5px solid var(--ink); box-shadow: 0 0 10px 3px rgba(247, 215, 116, 0.9); }
+.damier-lamp-bulb::before { content: ''; position: absolute; left: 50%; bottom: 100%; width: 1.5px; height: 70%; background: var(--ink); transform: translateX(-50%); }

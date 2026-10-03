@@ -1,6 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './components/world/world.css';
+import { applyCssTokens } from './art/cssTokens';
+
+applyCssTokens();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
