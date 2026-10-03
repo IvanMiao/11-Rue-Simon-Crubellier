@@ -1,10 +1,14 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { CaseGraph } from '../../case/types';
 import { SKILL_META } from '../../constants/skills';
 import type { NarrativeResponse, SkillCheckResult } from '../../types';
 import { cardIconUrl } from '../../art/cardIcons';
+import { drawDiceHand } from '../../art/draw/hand';
 import { chapterNumeral } from '../../world/damier';
 import { lockReasonText, type RoomSheet, type SheetLine } from '../../engine/selectors';
+import type { StageHotspot } from '../../art/stage';
+import RoomStage from './RoomStage';
+import type { Hour } from './DamierCanvas';
 
 export interface PendingLineCheck {
   lineId: string;
@@ -23,6 +27,11 @@ interface RoomPageProps {
   onArm: (lineId: string | null) => void;
   onAct: (line: SheetLine) => void;
   onCheckDone: () => void;
+  hour: Hour;
+  stageMode: 'print' | 'blueprint';
+  highlightedLineId: string | null;
+  onHighlightLine: (lineId: string | null) => void;
+  onStagePick: (lineId: string) => void;
   readOnly?: boolean;
 }
 
@@ -59,17 +68,30 @@ const CheckSlip: React.FC<{
   onCancel: () => void;
   onDone: () => void;
 }> = ({ line, graph, check, onRoll, onCancel, onDone }) => {
+  const handRef = useRef<HTMLCanvasElement>(null);
   const info = line.check!;
   const meta = SKILL_META[info.skill];
   const result = check?.result;
   const d1 = result ? (check!.rolling ? 1 + (check!.tick % 6) : result.die1) : null;
   const d2 = result ? (check!.rolling ? 1 + ((check!.tick * 5) % 6) : result.die2) : null;
+  const phase = !result ? 'hold' : check!.rolling ? 'shake' : 'open';
+
+  useEffect(() => {
+    const canvas = handRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(420 * ratio);
+    canvas.height = Math.round(150 * ratio);
+    drawDiceHand(ctx, { phase, tick: check?.tick || 0, die1: d1 || 1, die2: d2 || 1 });
+  }, [phase, check?.tick, d1, d2]);
 
   return (
     <div className="check-slip">
       <div className="world-kicker" style={{ color: meta.color }}>
         {info.kind === 'red' ? '红色检定 · 只有一次' : '白色检定 · 换个角度可以再试'}
       </div>
+      <canvas ref={handRef} className="check-hand" aria-hidden="true" />
       {!result ? (
         <>
           <p className="world-prose text-sm mt-2">
@@ -121,11 +143,30 @@ const CheckSlip: React.FC<{
 };
 
 /** One chapter of the book: the cell's title card, its prose, and its cahier-des-charges checklist. */
-const RoomPage: React.FC<RoomPageProps> = ({ sheet, prose, generating, graph, armedLineId, check, onArm, onAct, onCheckDone, readOnly }) => {
+const RoomPage: React.FC<RoomPageProps> = ({
+  sheet,
+  prose,
+  generating,
+  graph,
+  armedLineId,
+  check,
+  onArm,
+  onAct,
+  onCheckDone,
+  hour,
+  stageMode,
+  highlightedLineId,
+  onHighlightLine,
+  onStagePick,
+  readOnly,
+}) => {
   const consumedText = prose?.journal || [];
+  const hotspots: StageHotspot[] = readOnly
+    ? []
+    : sheet.lines.map((line) => ({ lineId: line.id, status: line.status, kind: line.kind }));
 
   return (
-    <article className="world-card chapter-card p-5 md:p-7" key={sheet.cellId}>
+    <article className="world-card chapter-card p-5 md:p-7">
       <header className="border-b border-stone-800/40 pb-3">
         <div className="chapter-numeral">{sheet.chapter ? `第 ${chapterNumeral(sheet.chapter)} 章` : '没有章节'}</div>
         <h2 className="chapter-title mt-1">{sheet.title}</h2>
@@ -133,6 +174,17 @@ const RoomPage: React.FC<RoomPageProps> = ({ sheet, prose, generating, graph, ar
           格 {sheet.cellId} · 清单 {sheet.done}/{sheet.total}
         </div>
       </header>
+
+      <RoomStage
+        input={{
+          cellId: sheet.cellId,
+          hour,
+          hotspots,
+          highlight: readOnly ? null : highlightedLineId,
+          mode: stageMode,
+        }}
+        onPick={onStagePick}
+      />
 
       <div className="world-prose mt-4 text-[15px]">
         {generating && !prose ? <p className="italic text-stone-500">瓦莱纳在回想这一格……</p> : <p>{prose?.text}</p>}
@@ -173,6 +225,10 @@ const RoomPage: React.FC<RoomPageProps> = ({ sheet, prose, generating, graph, ar
                 className={`sheet-line is-${line.status} ${line.faux ? 'is-faux' : ''}`}
                 disabled={!clickable || Boolean(check)}
                 onClick={() => (line.kind === 'check' ? onArm(armed ? null : line.id) : onAct(line))}
+                onMouseEnter={() => onHighlightLine(line.id)}
+                onMouseLeave={() => onHighlightLine(null)}
+                onFocus={() => onHighlightLine(line.id)}
+                onBlur={() => onHighlightLine(null)}
               >
                 <span className="sheet-mark">{MARK[line.status][line.kind]}</span>
                 <span className="sheet-label">{line.label}</span>

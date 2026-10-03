@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import { LINE, PALETTE, PRINT } from './palette';
+import { BLUEPRINT, LINE, PALETTE, PRINT } from './palette';
 import { paperTexture } from './textures';
+
+export type InkMode = 'print' | 'blueprint';
 
 const cutoutNormalVS = /* glsl */ `
 varying vec2 vUv;
@@ -41,6 +43,10 @@ uniform float grain;
 uniform float vignette;
 uniform float halftone;
 uniform float cell;
+uniform float blueprint;
+uniform vec3 blueprintGround;
+uniform vec3 blueprintLine;
+uniform vec3 blueprintFill;
 varying vec2 vUv;
 
 float viewZ(vec2 uv) { return camNear + texture2D(tDepth, uv).x * (camFar - camNear); }
@@ -71,10 +77,23 @@ void main() {
   vec2 g = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (vUv * res) / cell;
   float dotR = length(fract(g) - 0.5);
   float coverage = smoothstep(0.42, 0.12, lum);
-  float screen = smoothstep(coverage * 0.62, coverage * 0.62 - 0.08, dotR);
-  col *= 1.0 - halftone * screen;
+  if (blueprint < 0.5) {
+    float screen = smoothstep(coverage * 0.62, coverage * 0.62 - 0.08, dotR);
+    col *= 1.0 - halftone * screen;
+  }
   vec3 inkc = ink * (0.8 + 0.4 * p);
-  gl_FragColor = vec4(mix(col, inkc, e * 0.95), 1.0);
+  if (blueprint > 0.5) {
+    if (texture2D(tDepth, vUv).x > 0.999999) {
+      gl_FragColor = vec4(blueprintGround, 1.0);
+      return;
+    }
+    float fillTone = clamp(lum * 0.14, 0.02, 0.14);
+    vec3 fill = mix(blueprintGround, blueprintFill, fillTone);
+    vec3 line = blueprintLine * (0.88 + 0.12 * p);
+    gl_FragColor = vec4(mix(fill, line, e * 0.95), 1.0);
+  } else {
+    gl_FragColor = vec4(mix(col, inkc, e * 0.95), 1.0);
+  }
 }`;
 
 /**
@@ -121,9 +140,32 @@ export class InkRenderer {
         vignette: { value: PRINT.vignette },
         halftone: { value: PRINT.halftone },
         cell: { value: PRINT.halftoneCell },
+        blueprint: { value: 0 },
+        blueprintGround: { value: new THREE.Color(BLUEPRINT.ground).convertLinearToSRGB() },
+        blueprintLine: { value: new THREE.Color(BLUEPRINT.line).convertLinearToSRGB() },
+        blueprintFill: { value: new THREE.Color(BLUEPRINT.fill).convertLinearToSRGB() },
       },
     });
     this.quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.composite));
+  }
+
+  setMode(mode: InkMode) {
+    this.composite.uniforms.blueprint.value = mode === 'blueprint' ? 1 : 0;
+  }
+
+  dispose() {
+    this.colorRT.dispose();
+    this.normalRT.dispose();
+    this.normalMat.dispose();
+    this.cutoutMats.forEach((material) => material.dispose());
+    this.cutoutMats.clear();
+    this.composite.uniforms.tPaper.value.dispose();
+    this.composite.dispose();
+    this.quadScene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      mesh.geometry?.dispose();
+    });
+    this.quadScene.clear();
   }
 
   setSize(w: number, h: number) {

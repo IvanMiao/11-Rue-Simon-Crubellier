@@ -361,6 +361,7 @@ const App: React.FC = () => {
         generatingCellIds={generatingRoomIds}
         dispatch={worldDispatch}
         onOpenCase={() => setIsCaseOpen(true)}
+        isCaseOpen={isCaseOpen}
         onReset={handleReset}
       />
 

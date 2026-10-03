@@ -15,6 +15,7 @@ interface DamierCanvasProps {
   clinamenId: string;
   hour: Hour;
   current?: string | null;
+  lastMove?: { from: string; to: string; kind: MoveTarget['kind'] } | null;
   lamps?: ReadonlySet<string>;
   changed?: ReadonlySet<string>;
   targets?: Record<string, MoveTarget>;
@@ -63,6 +64,7 @@ const DamierCanvas: React.FC<DamierCanvasProps> = ({
   clinamenId,
   hour,
   current,
+  lastMove,
   lamps,
   changed,
   targets,
@@ -74,6 +76,39 @@ const DamierCanvas: React.FC<DamierCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const visitedKey = useMemo(() => Array.from(visited).sort().join(','), [visited]);
+  const [markerCellId, setMarkerCellId] = React.useState<string | null>(current || null);
+
+  useEffect(() => {
+    if (!current) {
+      setMarkerCellId(null);
+      return;
+    }
+    if (!lastMove || lastMove.to !== current) {
+      setMarkerCellId(current);
+      return;
+    }
+    const from = cells.find((cell) => cell.id === lastMove.from);
+    const to = cells.find((cell) => cell.id === lastMove.to);
+    if (!from || !to) {
+      setMarkerCellId(current);
+      return;
+    }
+    setMarkerCellId(from.id);
+    let intermediate: string | null = null;
+    if (lastMove.kind === 'knight') {
+      const dc = to.col - from.col;
+      const df = to.floor - from.floor;
+      const floor = Math.abs(df) === 2 ? from.floor + Math.sign(df) * 2 : from.floor;
+      const col = Math.abs(dc) === 2 ? from.col + Math.sign(dc) * 2 : from.col;
+      intermediate = cells.find((cell) => cell.floor === floor && cell.col === col)?.id || null;
+    }
+    const first = window.requestAnimationFrame(() => setMarkerCellId(intermediate || to.id));
+    const second = window.setTimeout(() => setMarkerCellId(to.id), 280);
+    return () => {
+      window.cancelAnimationFrame(first);
+      window.clearTimeout(second);
+    };
+  }, [cells, current, lastMove]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -88,7 +123,7 @@ const DamierCanvas: React.FC<DamierCanvasProps> = ({
     drawDamier(ctx, { cells, visited, clinamenId }, PX_PER_CELL);
   }, [cells, visitedKey, clinamenId]);
 
-  const currentCell = cells.find((c) => c.id === current);
+  const currentCell = cells.find((c) => c.id === markerCellId);
 
   return (
     <div

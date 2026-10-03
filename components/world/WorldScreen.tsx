@@ -22,6 +22,7 @@ interface WorldScreenProps {
   generatingCellIds: ReadonlySet<string>;
   dispatch: (action: Action) => GameEvent[];
   onOpenCase: () => void;
+  isCaseOpen: boolean;
   onReset: () => void;
 }
 
@@ -39,7 +40,15 @@ function footnoteFor(state: PlayerState, cardId: string) {
 }
 
 /** The play screen: Valène's canvas on the desk, the open chapter page, and the sketchbook. */
-const WorldScreen: React.FC<WorldScreenProps> = ({ state: liveState, graph, generatingCellIds, dispatch, onOpenCase, onReset }) => {
+const WorldScreen: React.FC<WorldScreenProps> = ({
+  state: liveState,
+  graph,
+  generatingCellIds,
+  dispatch,
+  onOpenCase,
+  isCaseOpen,
+  onReset,
+}) => {
   const [frozen, setFrozen] = useState<PlayerState | null>(null);
   const [pending, setPending] = useState<{ before: PlayerState; events: GameEvent[] } | null>(null);
   const [check, setCheck] = useState<PendingLineCheck | null>(null);
@@ -49,6 +58,8 @@ const WorldScreen: React.FC<WorldScreenProps> = ({ state: liveState, graph, gene
   const [caption, setCaption] = useState<{ title: string; text: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [notebookNew, setNotebookNew] = useState(false);
+  const [highlightedLineId, setHighlightedLineId] = useState<string | null>(null);
+  const [lastMove, setLastMove] = useState<{ from: string; to: string; kind: 'walk' | 'knight' | 'elevator' } | null>(null);
   const arrivalSeq = useRef(0);
 
   const state = frozen || liveState;
@@ -115,7 +126,11 @@ const WorldScreen: React.FC<WorldScreenProps> = ({ state: liveState, graph, gene
   const dispatchAndRecord = useCallback(
     (action: Action, lineId?: string) => {
       const events = act(action, lineId);
-      if (events) lastEvents.current = events;
+      if (events) {
+        lastEvents.current = events;
+        const moved = events.find((event) => event.type === 'moved');
+        if (moved?.type === 'moved') setLastMove({ from: moved.from || moved.to, to: moved.to, kind: moved.kind });
+      }
     },
     [act]
   );
@@ -214,6 +229,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({ state: liveState, graph, gene
                 clinamenId={CLINAMEN_CELL}
                 hour={hourOf(state.minutesPastEight)}
                 current={current}
+                lastMove={lastMove}
                 lamps={lamps}
                 changed={changed}
                 targets={targets}
@@ -258,6 +274,16 @@ const WorldScreen: React.FC<WorldScreenProps> = ({ state: liveState, graph, gene
               onArm={setArmed}
               onAct={onLine}
               onCheckDone={finishCheck}
+              hour={hourOf(state.minutesPastEight)}
+              stageMode={isCaseOpen ? 'blueprint' : 'print'}
+              highlightedLineId={highlightedLineId}
+              onHighlightLine={setHighlightedLineId}
+              onStagePick={(lineId) => {
+                const line = sheet.lines.find((candidate) => candidate.id === lineId);
+                if (!line || line.status !== 'open' || viewing || check) return;
+                if (line.kind === 'check') setArmed((active) => (active === line.id ? null : line.id));
+                else onLine(line);
+              }}
               readOnly={sheet.cellId !== current}
             />
           )}

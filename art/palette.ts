@@ -146,3 +146,9 @@ export const HOUR_LIGHT: Record<20 | 21 | 22 | 23, { tint: string; shade: string
   22: { tint: '#e8875a', shade: '#3d2b4a', angle: 84, strength: 0.4, night: 0.22 },
   23: { tint: '#9fb4d9', shade: '#1b2440', angle: 70, strength: 0.42, night: 0.42 },
 };
+
+export const BLUEPRINT = {
+  ground: '#263b4a',
+  line: '#e1e4dc',
+  fill: '#728792',
+};
