@@ -9,6 +9,7 @@ import { buildCase, caseBible, caseRoomContent, CASE_ROOM_IDS } from '../case/bu
 import { CASE_ITEMS } from '../case/caseData';
 import type { CaseEvidence, CaseGraph } from '../case/types';
 import { Action } from './types';
+import { CELL_BY_ID, CHAPTER_ONE_CELL, CLINAMEN_CELL, cellTitle } from '../world/damier';
 import {
   isCombineAvailable,
   isInteractionAvailable,
@@ -37,7 +38,7 @@ function moveOptions(state: PlayerState, excludeFinale = false): string[] {
   const reachable = getReachableRooms(state.currentRoomId, {
     hundredthUnlocked: hundredthUnlocked(state),
   });
-  return [...reachable.all].filter((roomId) => !excludeFinale || roomId !== '100-1');
+  return [...reachable.all].filter((roomId) => !excludeFinale || roomId !== CLINAMEN_CELL);
 }
 
 function pickMove(
@@ -189,7 +190,7 @@ function nextStepTo(state: PlayerState, targets: string[]): Action | null {
       if (visited.has(neighbor)) return;
       const kind = describeMove(reachable, neighbor);
       if (kind === 'blocked') return;
-      const distance = shortest + moveTimeCost(kind, state);
+      const distance = shortest + moveTimeCost(kind, state, current, neighbor);
       if (distance < (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) {
         distances.set(neighbor, distance);
         firstHop.set(neighbor, current === start ? neighbor : firstHop.get(current)!);
@@ -295,6 +296,17 @@ export const caseBot: Bot = (state, _actions, random) => {
   if (state.runStatus !== 'playing' || !state.case) return null;
   const graph = buildCase(state.runSeed);
 
+  if (!state.case.notebook) {
+    const notebook = graph.evidence.find(
+      (evidence) => evidence.grantsNotebook && isInteractionAvailable(state, evidence.id)
+    );
+    if (notebook) return { type: 'interact', interactionId: notebook.id };
+    const notebookCell = graph.evidence.find((evidence) => evidence.grantsNotebook)?.roomId;
+    return notebookCell
+      ? nextStepTo(state, [notebookCell]) || fallbackMove(state, random)
+      : fallbackMove(state, random);
+  }
+
   const recipe = graph.recipes.find(
     (candidate) =>
       !state.case!.usedRecipes.includes(candidate.id) &&
@@ -341,35 +353,31 @@ export const caseBot: Bot = (state, _actions, random) => {
   const lockedCount = state.case.lockedGroups.length;
   if (itemRooms.length) return nextStepTo(state, itemRooms) || fallbackMove(state, random);
   const evidenceRooms = evidenceRoomsForNeededCards(state, graph, needed);
-  if (state.currentRoomId === '100-1' && hasCloseCondition(state)) {
+  if (state.currentRoomId === CLINAMEN_CELL && hasCloseCondition(state)) {
     return isInteractionAvailable(state, '100-1-finale')
       ? { type: 'interact', interactionId: '100-1-finale' }
       : fallbackMove(state, random);
   }
-  if (hasCloseCondition(state) && state.currentRoomId !== '100-1') {
-    return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+  if (hasCloseCondition(state) && state.currentRoomId !== CLINAMEN_CELL) {
+    return nextStepTo(state, [CLINAMEN_CELL]) || fallbackMove(state, random);
   }
   if (evidenceRooms.length) return nextStepTo(state, evidenceRooms) || fallbackMove(state, random);
   if (lockedCount >= 2) {
-    if (state.currentRoomId === '100-1' && state.minutesPastEight < 180) {
-      return (
-        getReachableRooms(state.currentRoomId, { hundredthUnlocked: true }).walk.has('0-5')
-          ? { type: 'move', roomId: '0-5' }
-          : fallbackMove(state, random)
-      );
+    if (state.currentRoomId === CLINAMEN_CELL && state.minutesPastEight < 180) {
+      return nextStepTo(state, [CHAPTER_ONE_CELL]) || fallbackMove(state, random);
     }
-    if (state.currentRoomId !== '100-1') {
-      return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+    if (state.currentRoomId !== CLINAMEN_CELL) {
+      return nextStepTo(state, [CLINAMEN_CELL]) || fallbackMove(state, random);
     }
   }
   return fallbackMove(state, random);
 };
 
 function roomsWithCombineAction(actions: Action[]): Set<string> {
-  let roomId = '0-5';
+  let roomId = CHAPTER_ONE_CELL;
   const rooms = new Set<string>();
   actions.forEach((action) => {
-    if (action.type === 'startRun') roomId = '0-5';
+    if (action.type === 'startRun') roomId = CHAPTER_ONE_CELL;
     if (action.type === 'move') roomId = action.roomId;
     if (action.type === 'combine' && CASE_ROOM_IDS.includes(roomId as (typeof CASE_ROOM_IDS)[number])) {
       rooms.add(roomId);
@@ -456,26 +464,22 @@ export const guessBot: Bot = (state, actions, random) => {
   if (skill) return { type: 'spendPoint', skill };
 
   const lockedCount = state.case.lockedGroups.length;
-  if (state.currentRoomId === '100-1' && hasCloseCondition(state)) {
+  if (state.currentRoomId === CLINAMEN_CELL && hasCloseCondition(state)) {
     return isInteractionAvailable(state, '100-1-finale')
       ? { type: 'interact', interactionId: '100-1-finale' }
       : fallbackMove(state, random);
   }
-  if (hasCloseCondition(state) && state.currentRoomId !== '100-1') {
-    return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+  if (hasCloseCondition(state) && state.currentRoomId !== CLINAMEN_CELL) {
+    return nextStepTo(state, [CLINAMEN_CELL]) || fallbackMove(state, random);
   }
   const evidenceRooms = roomsWithAvailableEvidence(state, { checkMorale: true });
   if (evidenceRooms.length) return nextStepTo(state, evidenceRooms) || fallbackMove(state, random);
   if (lockedCount >= 2) {
-    if (state.currentRoomId === '100-1' && state.minutesPastEight < 180) {
-      return (
-        getReachableRooms(state.currentRoomId, { hundredthUnlocked: true }).walk.has('0-5')
-          ? { type: 'move', roomId: '0-5' }
-          : fallbackMove(state, random)
-      );
+    if (state.currentRoomId === CLINAMEN_CELL && state.minutesPastEight < 180) {
+      return nextStepTo(state, [CHAPTER_ONE_CELL]) || fallbackMove(state, random);
     }
-    if (state.currentRoomId !== '100-1') {
-      return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+    if (state.currentRoomId !== CLINAMEN_CELL) {
+      return nextStepTo(state, [CLINAMEN_CELL]) || fallbackMove(state, random);
     }
   }
   return fallbackMove(state, random);
@@ -529,16 +533,18 @@ export function runBot(bot: Bot, seed: number, archetypeIdx: number): BotRunResu
     }
     result.events.forEach((event) => {
       if (event.type !== 'needsRoomContent') return;
-      const room = BUILDING_LAYOUT.find((candidate) => candidate.id === event.roomId);
-      if (!room || state.visitedRooms[event.roomId]) return;
+      const cell = CELL_BY_ID[event.roomId];
+      const room = BUILDING_LAYOUT.find((candidate) => candidate.id === cell?.apartmentId);
+      if (!cell || !room || state.visitedRooms[event.roomId]) return;
+      const roomName = `${room.name} · ${cellTitle(event.roomId)}`;
       const content = fallbackRoom(
-        room.id,
-        room.name,
+        event.roomId,
+        roomName,
         state.runSeed,
         state.character,
         state.lastMoveKind === 'knight'
       );
-      applyAction({ type: 'roomContent', roomId: room.id, content });
+      applyAction({ type: 'roomContent', roomId: event.roomId, content });
     });
     return result.events;
   };

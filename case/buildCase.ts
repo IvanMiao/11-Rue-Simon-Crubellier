@@ -1,6 +1,7 @@
 import { NarrativeResponse, StoryBible } from '../types';
 import {
   CASE_ALIBI_RECIPE,
+  CASE_APARTMENT_PASSAGES,
   CASE_CARDS,
   CASE_CHARACTER_ROOMS,
   CASE_EVIDENCE_TEMPLATES,
@@ -24,6 +25,7 @@ import {
 } from './types';
 import { FALLBACK_BIBLE, FINALE_INTERACTION } from '../utils/fallbackContent';
 import { hashString, mulberry32, pickIndex } from '../utils/rng';
+import { CELL_BY_ID, CLINAMEN_CELL } from '../world/damier';
 
 export { CASE_ROOM_IDS };
 export type { CaseBible, CaseCard, CaseGraph, CaseGroup, CaseSlot, LiarId } from './types';
@@ -56,6 +58,7 @@ export function buildCase(seed: number): CaseGraph {
     kind: template.kind,
     label: template.label,
     cards: [...template.cards],
+    ...(template.grantsNotebook ? { grantsNotebook: true } : {}),
     ...(template.availableFrom !== undefined ? { availableFrom: template.availableFrom } : {}),
     ...(template.requiresItem ? { requiresItem: template.requiresItem } : {}),
     ...(template.failCards ? { failCards: [...template.failCards] } : {}),
@@ -96,12 +99,18 @@ export function buildCase(seed: number): CaseGraph {
 }
 
 export function caseRoomContent(graph: CaseGraph, roomId: string): NarrativeResponse {
-  if (!CASE_ROOM_IDS.includes(roomId as (typeof CASE_ROOM_IDS)[number]) && roomId !== '100-1') {
+  const cell = CELL_BY_ID[roomId];
+  const passage = cell ? CASE_APARTMENT_PASSAGES[cell.apartmentId] : undefined;
+  if (
+    !CASE_ROOM_IDS.includes(roomId as (typeof CASE_ROOM_IDS)[number]) &&
+    roomId !== CLINAMEN_CELL &&
+    !passage
+  ) {
     throw new Error(`Not a case room: ${roomId}`);
   }
-  if (roomId === '100-1') {
+  if (roomId === CLINAMEN_CELL) {
     return {
-      text: '第 100 层停在二十点整。案卷已经补上了可以补上的部分。',
+      text: CASE_ROOM_DESCRIPTIONS[roomId],
       items: [],
       mood: '静滞',
       available_interactions: [{ ...FINALE_INTERACTION }],
@@ -122,7 +131,7 @@ export function caseRoomContent(graph: CaseGraph, roomId: string): NarrativeResp
     }));
   const collectible = CASE_ITEMS.find((item) => item.roomId === roomId);
   return {
-    text: CASE_ROOM_DESCRIPTIONS[roomId],
+    text: CASE_ROOM_DESCRIPTIONS[roomId] || passage || '',
     items: [],
     mood: '静滞',
     ...(collectible
@@ -180,6 +189,7 @@ export function solveCase(
   opts: { allowChecks?: boolean } = {}
 ): { solvable: boolean; missing: string[] } {
   const owned = new Set<string>();
+  let notebook = false;
   const obtainableItems = new Set(
     CASE_ITEMS.filter((item) =>
       CASE_ROOM_IDS.includes(item.roomId as (typeof CASE_ROOM_IDS)[number])
@@ -190,6 +200,11 @@ export function solveCase(
     changed = false;
     for (const evidence of graph.evidence) {
       if (opts.allowChecks === false && evidence.kind === 'check') continue;
+      if (evidence.grantsNotebook) {
+        notebook = true;
+        continue;
+      }
+      if (!notebook) continue;
       if (evidence.requiresItem && !obtainableItems.has(evidence.requiresItem)) continue;
       const grants = evidence.cards;
       grants.forEach((cardId) => {

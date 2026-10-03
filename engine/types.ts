@@ -9,6 +9,16 @@ import {
 } from '../types';
 import type { CaseHourPage } from '../case/types';
 
+export type LockReason =
+  | { kind: 'done' }
+  | { kind: 'needsNotebook' }
+  | { kind: 'needsItem'; itemId: string; itemName: string; itemCellId: string }
+  | { kind: 'notBefore'; minute: number }
+  | { kind: 'lowMorale'; morale: number; need: number }
+  | { kind: 'needsNewCard' }
+  | { kind: 'needsGroups'; have: number; need: number }
+  | { kind: 'unavailable' };
+
 export type Action =
   | { type: 'startRun'; character: Character; seed: number; bible: StoryBible }
   | { type: 'roomContent'; roomId: string; content: NarrativeResponse }
@@ -38,4 +48,4 @@ export type GameEvent =
   | { type: 'itemCollected'; item: InventoryItem }
   | { type: 'thoughtInternalized'; thoughtId: string }
   | { type: 'runEnded'; status: RunStatus }
-  | { type: 'rejected'; action: Action['type']; reason: string };
+  | { type: 'rejected'; action: Action['type']; reason: string; lock?: LockReason };

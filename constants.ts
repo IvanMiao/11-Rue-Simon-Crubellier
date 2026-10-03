@@ -17,15 +17,15 @@ export const BUILDING_LAYOUT: RoomData[] = [
   { id: '7-1', name: 'GRATIOLET', floor: 7, colSpan: 2, type: 'apartment' },
   { id: '7-2', name: 'CRESPI', floor: 7, colSpan: 1, type: 'apartment' },
   { id: '7-3', name: 'NIETO & ROGERS', floor: 7, colSpan: 1, type: 'apartment' },
-  { id: '7-4', name: '', floor: 7, colSpan: 1, type: 'apartment' },
-  { id: '7-5', name: '', floor: 7, colSpan: 1, type: 'apartment' },
+  { id: '7-4', name: 'JÉRÔME', floor: 7, colSpan: 1, type: 'apartment' },
+  { id: '7-5', name: 'FRESNEL', floor: 7, colSpan: 1, type: 'apartment' },
   { id: '7-6', name: 'BREIDEL', floor: 7, colSpan: 1, type: 'service' },
-  { id: '7-7', name: 'VALÈNE', floor: 7, colSpan: 1, type: 'apartment' },
+  { id: '7-7', name: 'VALÈNE', floor: 7, colSpan: 3, type: 'apartment' },
 
   // Floor 6
   { id: '6-1', name: 'CINOC', floor: 6, colSpan: 2, type: 'apartment' },
   { id: '6-2', name: 'DINTEVILLE', floor: 6, colSpan: 3, type: 'apartment' },
-  { id: 'ELEVATOR', name: 'ELEVATOR', floor: 6, colSpan: 2, rowSpan: 6, type: 'elevator' },
+  { id: 'STAIRS', name: 'ESCALIERS', floor: 6, colSpan: 2, rowSpan: 6, type: 'stairwell' },
   { id: '6-3', name: 'WINCKLER', floor: 6, colSpan: 3, type: 'apartment' },
 
   // Floor 5
@@ -67,7 +67,4 @@ export const BUILDING_LAYOUT: RoomData[] = [
   { id: '-1-6', name: 'CAVE (A/G)', floor: -1, colSpan: 1, type: 'basement' },
   { id: '-1-7', name: 'CAVE (M/M)', floor: -1, colSpan: 1, type: 'basement' },
   { id: '-1-8', name: 'CAVE (De)', floor: -1, colSpan: 1, type: 'basement' },
-
-  // Hidden Floor (End Game)
-  { id: '100-1', name: 'THE 100TH KEY', floor: 100, colSpan: 10, type: 'apartment' },
 ];

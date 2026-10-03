@@ -4,6 +4,7 @@ import {
   MINUTES_PER_RUN,
   SKILL_MAX,
   SKILL_ORDER,
+  START_ROOM_ID,
   TIME_COMBINE,
   TIME_ELEVATOR,
   TIME_INSPECT,
@@ -11,6 +12,7 @@ import {
   TIME_KNIGHT,
   TIME_THOUGHT,
   TIME_WALK,
+  TIME_WALK_INSIDE,
   THOUGHT_SLOTS,
   XP_PER_LEVEL,
 } from '../constants/skills';
@@ -29,9 +31,10 @@ import {
   Thought,
 } from '../types';
 import { sanitizeRoomContent } from './fallbackContent';
+import { CELL_BY_ID } from '../world/damier';
 
 export const INITIAL_PLAYER_STATE: PlayerState = {
-  version: 6,
+  version: 7,
   runSeed: 0,
   runStatus: 'creating',
   minutesPastEight: 0,
@@ -76,7 +79,9 @@ export function hasInternalizedThought(state: PlayerState, effect: ThoughtEffect
 
 export function moveTimeCost(
   kind: 'walk' | 'knight' | 'elevator',
-  state?: PlayerState
+  state?: PlayerState,
+  from?: string,
+  to?: string
 ): number {
   if (kind === 'knight') {
     if (!state) return TIME_KNIGHT;
@@ -86,8 +91,12 @@ export function moveTimeCost(
       : chainCost;
   }
   if (kind === 'elevator') return TIME_ELEVATOR;
+  const baseCost =
+    from && to && CELL_BY_ID[from]?.apartmentId === CELL_BY_ID[to]?.apartmentId
+      ? TIME_WALK_INSIDE
+      : TIME_WALK;
   return (
-    TIME_WALK +
+    baseCost +
     (state && state.minutesPastEight >= 180 ? 5 : 0) +
     (state && hasInternalizedThought(state, 'knight') ? 5 : 0)
   );
@@ -129,7 +138,7 @@ export function beginRun(
     storyBible: bible,
     morale: maxMorale,
     maxMorale,
-    currentRoomId: '0-5',
+    currentRoomId: START_ROOM_ID,
     plotThreads: normalizePlotThreads(bible.plot_threads || []),
     thoughts: thoughtsFromBible(bible),
     discoveredFacts: [],

@@ -43,6 +43,7 @@ export interface CaseEvidence {
   kind: 'look' | 'check';
   label: string;
   cards: string[];
+  grantsNotebook?: boolean;
   availableFrom?: number;
   requiresItem?: string;
   failCards?: string[];
@@ -94,7 +95,9 @@ export interface CaseGraph {
 export interface CaseState {
   liar: LiarId;
   handSkill: 'perception' | 'logic';
+  notebook: boolean;
   cards: string[];
+  cardSources: Record<string, CardSource>;
   takenEvidence: string[];
   usedRecipes: string[];
   slots: Record<string, string | null>;
@@ -104,6 +107,14 @@ export interface CaseState {
   pondered: Record<string, string>;
   notes: string[];
   grade?: number;
+}
+
+export interface CardSource {
+  via: 'look' | 'check' | 'checkFail' | 'recipe';
+  cellId: string;
+  evidenceId?: string;
+  recipeId?: string;
+  minute: number;
 }
 
 export interface CaseBible extends StoryBible {}

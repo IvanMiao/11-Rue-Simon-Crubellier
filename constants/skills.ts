@@ -106,6 +106,7 @@ export const SKILL_MAX = 8;
 export const BASE_MORALE = 4;
 export const MINUTES_PER_RUN = 240;
 export const TIME_WALK = 15;
+export const TIME_WALK_INSIDE = 5;
 export const TIME_KNIGHT = 8;
 export const TIME_ELEVATOR = 20;
 export const TIME_INTERACTION = 5;
@@ -117,8 +118,8 @@ export const TIME_INSPECT = 5;
 export const TIME_THOUGHT = 20;
 export const THOUGHT_SLOTS = 2;
 export const XP_PER_LEVEL = 7;
-export const START_ROOM_ID = '0-5';
-export const STORAGE_KEY = 'perec_run_state_v6';
+export const START_ROOM_ID = '3:6';
+export const STORAGE_KEY = 'perec_run_state_v7';
 
 export const ARCHETYPES: ArchetypeDef[] = [
   {

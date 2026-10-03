@@ -2,37 +2,41 @@ import type { CheckDifficulty, CheckKind, SkillId } from '../types';
 import type { CardKind, CaseHourPage, CaseItem, CaseThought, LiarId } from './types';
 
 export const CASE_ROOM_IDS = [
-  '0-5',
-  '3-1',
-  '6-3',
-  '0-4',
-  '8-2',
-  '7-7',
-  '8-6',
-  '-1-3',
-  '0-3',
-  '6-1',
+  '3:6',
+  '0:6',
+  '0:7',
+  '3:5',
+  '3:1',
+  '6:8',
+  '6:10',
+  '0:5',
+  '8:3',
+  '7:10',
+  '8:7',
+  '-1:3',
+  '0:3',
+  '6:1',
 ] as const;
 
 export const CASE_HOUR_PAGES: CaseHourPage[] = [
   {
     minute: 60,
     hour: 21,
-    title: '二十一点',
-    text: '二十一点。电梯的铜指针动了一格，又停住。',
-    roomIds: ['0-5'],
+    title: '第一次换光',
+    text: '二十一点。画布上的光往东移了一格。电梯的铜指针动了一格，又停住。',
+    roomIds: ['0:7'],
   },
   {
     minute: 120,
     hour: 22,
-    title: '二十二点',
-    text: '二十二点。三楼传来一声很轻的咔哒，像手指松开。',
-    roomIds: ['3-1'],
+    title: '第二次换光',
+    text: '二十二点。光落到三楼。那里传来一声很轻的咔哒，像手指松开。',
+    roomIds: ['3:1'],
   },
   {
     minute: 180,
     hour: 23,
-    title: '二十三点',
+    title: '第三次换光',
     text: '二十三点。楼梯的定时灯熄了，摸黑走路要多花五分钟。骑士不需要灯。',
     roomIds: [],
   },
@@ -43,13 +47,13 @@ export const CASE_ITEMS: CaseItem[] = [
     id: 'it-keyring',
     name: '诺谢尔太太的钥匙串',
     description: '门房的钥匙串，能开楼里每一扇上锁的门。',
-    roomId: '0-4',
+    roomId: '0:5',
   },
   {
     id: 'it-loupe',
     name: '莫雷莱的放大镜',
     description: '镜片上有一道裂纹。拿着它，感知检定 +2。',
-    roomId: '8-6',
+    roomId: '8:7',
   },
 ];
 
@@ -146,7 +150,7 @@ export const CASE_LIAR_VARIANTS: Record<
   'p-nochere': {
     truePlace: 'pl-cellar',
     proofObject: 'o-coal-glove',
-    proofRoom: '-1-3',
+    proofRoom: '-1:3',
     sillText: '笔毛硬得像草，至少干了一周。',
     coalText: '手套还是温的，内侧缝着门房的号码。',
     receiptText: '收据是上周的，签名是马基索夫人。',
@@ -155,7 +159,7 @@ export const CASE_LIAR_VARIANTS: Record<
   'p-smautf': {
     truePlace: 'pl-antiques',
     proofObject: 'o-receipt',
-    proofRoom: '0-3',
+    proofRoom: '0:3',
     sillText: '笔毛硬得像草，至少干了一周。',
     coalText: '手套冷透了，挂在这里不止一个冬天。',
     receiptText: '收据开于 20:00 整，签名：斯莫特。',
@@ -164,7 +168,7 @@ export const CASE_LIAR_VARIANTS: Record<
   'p-valene': {
     truePlace: 'pl-bartlebooth',
     proofObject: 'o-wet-brush',
-    proofRoom: '3-1',
+    proofRoom: '3:5',
     sillText: '笔尖还是湿的，钴蓝和今晚的天空同一个颜色。',
     coalText: '手套冷透了，挂在这里不止一个冬天。',
     receiptText: '收据是上周的，签名是马基索夫人。',
@@ -178,6 +182,7 @@ export interface CaseEvidenceTemplate {
   kind: 'look' | 'check';
   label: string;
   cards: string[];
+  grantsNotebook?: boolean;
   availableFrom?: number;
   requiresItem?: string;
   failCards?: string[];
@@ -192,8 +197,17 @@ export interface CaseEvidenceTemplate {
 
 export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   {
+    id: 'ev-stair-notebook',
+    roomId: '3:6',
+    kind: 'look',
+    label: '拾起台阶上的速写本',
+    cards: [],
+    grantsNotebook: true,
+    text: '是瓦莱纳的速写本。第一页写着：「我要把整栋楼画下来，可我已经记不全了。」后面是空白的案卷页。你把它收进口袋。',
+  },
+  {
     id: 'ev-hall-mailboxes',
-    roomId: '0-5',
+    roomId: '0:6',
     kind: 'look',
     label: '读信箱上的名字',
     cards: ['p-bartlebooth', 'p-winckler', 'p-morellet', 'p-nochere', 'p-smautf', 'p-valene'],
@@ -201,7 +215,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-hall-lift',
-    roomId: '0-5',
+    roomId: '0:7',
     kind: 'look',
     label: '看电梯的铜指针',
     cards: [],
@@ -214,7 +228,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-bb-puzzle',
-    roomId: '3-1',
+    roomId: '3:1',
     kind: 'look',
     label: '俯看桌上的拼图',
     cards: ['shape-x'],
@@ -222,7 +236,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-bb-hand',
-    roomId: '3-1',
+    roomId: '3:1',
     kind: 'check',
     label: '掰开他攥紧的手指',
     cards: ['shape-w'],
@@ -235,7 +249,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-bb-hand-late',
-    roomId: '3-1',
+    roomId: '3:1',
     kind: 'look',
     label: '再看他的手',
     cards: ['shape-w'],
@@ -244,7 +258,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-bb-sill',
-    roomId: '3-1',
+    roomId: '3:5',
     kind: 'look',
     label: '看窗台上的画笔',
     cards: ['o-wet-brush'],
@@ -256,7 +270,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-wk-bench',
-    roomId: '6-3',
+    roomId: '6:8',
     kind: 'look',
     label: '翻开工作台上的笔记',
     cards: ['o-cut-notes'],
@@ -264,7 +278,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-wk-chair',
-    roomId: '6-3',
+    roomId: '6:10',
     kind: 'check',
     label: '对着空椅子问他为什么',
     cards: ['w-revenge'],
@@ -277,7 +291,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-loge-notice',
-    roomId: '0-4',
+    roomId: '0:5',
     kind: 'look',
     label: '读讣告栏',
     cards: ['o-death-notice', 't-1973'],
@@ -285,7 +299,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-loge-ask',
-    roomId: '0-4',
+    roomId: '0:5',
     kind: 'look',
     label: '问诺谢尔太太二十点在哪',
     cards: ['ts-nochere', 'pl-loge'],
@@ -293,7 +307,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-sm-ask',
-    roomId: '8-2',
+    roomId: '8:3',
     kind: 'look',
     label: '问斯莫特二十点在哪',
     cards: ['ts-smautf', 'pl-attic', 'w-gift'],
@@ -301,7 +315,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-va-ask',
-    roomId: '7-7',
+    roomId: '7:10',
     kind: 'look',
     label: '问瓦莱纳二十点在哪',
     cards: ['ts-valene', 'pl-studio'],
@@ -309,7 +323,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-va-canvas',
-    roomId: '7-7',
+    roomId: '7:10',
     kind: 'check',
     label: '辨认画布角落的日期',
     cards: ['t-1950'],
@@ -322,7 +336,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-mo-vat',
-    roomId: '8-6',
+    roomId: '8:7',
     kind: 'look',
     label: '看药水槽里的纸',
     cards: ['o-blank-sheet'],
@@ -330,7 +344,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-ch-coal',
-    roomId: '-1-3',
+    roomId: '-1:3',
     kind: 'look',
     label: '翻煤堆旁的手套',
     cards: ['o-coal-glove'],
@@ -343,7 +357,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-an-receipt',
-    roomId: '0-3',
+    roomId: '0:3',
     kind: 'look',
     label: '读柜台上的收据',
     cards: ['o-receipt'],
@@ -356,7 +370,7 @@ export const CASE_EVIDENCE_TEMPLATES: CaseEvidenceTemplate[] = [
   },
   {
     id: 'ev-ci-dict',
-    roomId: '6-1',
+    roomId: '6:1',
     kind: 'check',
     label: '翻他正在删去的词条',
     cards: ['t-1973'],
@@ -394,16 +408,30 @@ export const CASE_ALIBI_RECIPE = {
 };
 
 export const CASE_ROOM_DESCRIPTIONS: Record<string, string> = {
-  '0-5': '信箱的铜牌在二十点整反着光。六个名字都在，只有灰尘还在缓慢地堆积。',
-  '3-1': '港口的第 439 幅拼图停在最后一个空洞前。巴特尔布思的手没有松开，那支画笔还留在窗台上。',
-  '6-3': '温克勒的工作台保持着最后一次切割的角度。椅子空着，纸上的行距越来越窄。',
-  '0-4': '门房的讣告栏一动不动，纸边已经泛黄。楼上没有脚步，诺谢尔太太的围裙垂在原处。',
-  '8-2': '银器停在擦到一半的时候，窗外的楼层也停在同一秒。斯莫特的手藏在桌布下面。',
-  '7-7': '画布上的整栋楼都停在二十点整。瓦莱纳没有离开画架，只有一扇窗还没有画上去。',
-  '8-6': '药水槽里的纸没有浮动，白色的边沿停在水面。莫雷莱留下的气味像胶水和海盐。',
-  '-1-3': '煤堆旁的手套没有落下灰。锅炉已经冷了，管道里的蒸汽却仍像一句没有说完的话。',
-  '0-3': '古董店的柜台停在结账之前，收据压着一层薄灰。墙上的钟指向二十点整。',
-  '6-1': '词条停在被删掉的那一行，橡皮屑没有落地。日期还在纸角上，等着有人重新读它。',
+  '3:6': '三楼的楼梯平台。定时灯刚亮起，台阶上躺着一本摊开的速写本，炭笔压着其中一页：一栋打好方格、还没有画上任何东西的楼。',
+  '3:5': '巴特尔布思家的门厅。窗台上横着一支画笔，笔尖还湿。里间的门半开，能看见桌布的一角。',
+  '3:1': '港口的第 439 幅拼图停在最后一个空洞前。巴特尔布思的手没有松开，那支画笔还留在窗台上。',
+  '0:6': '信箱的铜牌在二十点整反着光。六个名字都在，只有灰尘还在缓慢地堆积。',
+  '0:7': '电梯的铁栅门合着。门楣上的铜指针指着某一层，指针下面的玻璃有一道裂纹。',
+  '6:8': '温克勒的工作台保持着最后一次切割的角度。纸上的行距越来越窄。',
+  '6:10': '温克勒的里屋。墙上挂着他的棕褐色照片，照片下面是一把空椅子。',
+  '0:5': '门房的讣告栏一动不动，纸边已经泛黄。楼上没有脚步，诺谢尔太太的围裙垂在原处。',
+  '8:3': '银器停在擦到一半的时候，窗外的楼层也停在同一秒。斯莫特的手藏在桌布下面。',
+  '7:10': '画布上的整栋楼都停在二十点整。瓦莱纳没有离开画架，只有一扇窗还没有画上去。',
+  '8:7': '药水槽里的纸没有浮动，白色的边沿停在水面。莫雷莱留下的气味像胶水和海盐。',
+  '-1:3': '煤堆旁的手套没有落下灰。锅炉已经冷了，管道里的蒸汽却仍像一句没有说完的话。',
+  '0:3': '古董店的柜台停在结账之前，收据压着一层薄灰。墙上的钟指向二十点整。',
+  '6:1': '词条停在被删掉的那一行，橡皮屑没有落地。日期还在纸角上，等着有人重新读它。',
+  '-1:1': '地窖最左边的那一格。这里本来不该有门。墙上有一块缺口，形状像一个 X。',
+};
+
+export const CASE_APARTMENT_PASSAGES: Record<string, string> = {
+  '3-1': '巴特尔布思家的一间。墙上挂满了装框的港口水彩，每一幅都只剩下白纸。',
+  '6-3': '温克勒的房间。架子上堆着没上色的木头小玩具。',
+  '0-3': '古董店的后间。家具挤成一团，分不清哪些是要卖的。',
+  '-1-3': '锅炉房的另一头。管子沿墙排开，摸上去是凉的。',
+  '6-1': '辛诺克的另一间。纸箱里装满了从旧词典上剪下来的词条。',
+  STAIRS: '楼梯间。扶手磨得发亮，上一层和下一层都静着。',
 };
 
 export const CASE_CHARACTER_ROOMS: Record<string, string> = {
