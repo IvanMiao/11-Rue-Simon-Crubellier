@@ -3,16 +3,32 @@ import { DIFFICULTY_LABEL, SKILL_META, XP_PER_LEVEL } from '../constants/skills'
 import { clockLabel, skillValue } from '../utils/gameLogic';
 import { formatSeed } from '../utils/rng';
 import { PlayerState, SkillId } from '../types';
+import type { CaseGraph } from '../case/types';
+import CaseBoard from './CaseBoard';
 
 interface CaseFileProps {
   isOpen: boolean;
   onClose: () => void;
   state: PlayerState;
+  caseGraph: CaseGraph | null;
   onInternalize: (thoughtId: string) => void;
   onSpendPoint: (skill: SkillId) => void;
+  onPlaceCard: (slotId: string, cardId: string | null) => void;
+  onCombine: (a: string, b: string) => void;
+  onSubmitGroup: (groupId: string) => void;
 }
 
-const CaseFile: React.FC<CaseFileProps> = ({ isOpen, onClose, state, onInternalize, onSpendPoint }) => {
+const CaseFile: React.FC<CaseFileProps> = ({
+  isOpen,
+  onClose,
+  state,
+  caseGraph,
+  onInternalize,
+  onSpendPoint,
+  onPlaceCard,
+  onCombine,
+  onSubmitGroup,
+}) => {
   if (!isOpen) return null;
 
   const knownThreads = state.plotThreads.filter((t) => t.status !== 'unknown');
@@ -29,12 +45,25 @@ const CaseFile: React.FC<CaseFileProps> = ({ isOpen, onClose, state, onInternali
               只收录你已经看见的东西 · {clockLabel(state.minutesPastEight)} · SEED {formatSeed(state.runSeed)}
             </p>
           </div>
-          <button onClick={onClose} className="font-typewriter text-xl hover:text-red-300">
+          <button
+            onClick={onClose}
+            aria-label="关闭案卷柜"
+            className="min-h-11 min-w-11 font-typewriter text-xl hover:text-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 focus-visible:outline-offset-2"
+          >
             [X]
           </button>
         </div>
 
         <div className="p-6 md:p-10 space-y-10 overflow-y-auto">
+          {caseGraph && state.case && (
+            <CaseBoard
+              graph={caseGraph}
+              state={state.case}
+              onPlaceCard={onPlaceCard}
+              onCombine={onCombine}
+              onSubmitGroup={onSubmitGroup}
+            />
+          )}
           <section>
             <h3 className="font-typewriter text-sm font-bold uppercase border-b-2 border-stone-800 mb-4 pb-2">
               已知线索

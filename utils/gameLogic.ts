@@ -1,5 +1,6 @@
 import {
   BASE_MORALE,
+  FINALE_MIN_GROUPS,
   MINUTES_PER_RUN,
   SKILL_MAX,
   SKILL_ORDER,
@@ -25,10 +26,10 @@ import {
   StoryPlotThread,
   Thought,
 } from '../types';
-import { FINALE_INTERACTION, sanitizeRoomContent } from './fallbackContent';
+import { sanitizeRoomContent } from './fallbackContent';
 
 export const INITIAL_PLAYER_STATE: PlayerState = {
-  version: 4,
+  version: 5,
   runSeed: 0,
   runStatus: 'creating',
   minutesPastEight: 0,
@@ -331,15 +332,6 @@ export function applyCheckToState(
     ]);
   }
 
-  if (
-    result.success &&
-    extras?.resolves_mystery &&
-    roomId === '100-1' &&
-    interactionId === FINALE_INTERACTION.id
-  ) {
-    next = { ...next, runStatus: 'solved' };
-  }
-
   if (result.success || result.kind === 'red') {
     next = consumeInteraction(next, roomId, interactionId);
   }
@@ -381,7 +373,7 @@ export function clueCount(state: PlayerState): number {
 }
 
 export function hundredthUnlocked(state: PlayerState): boolean {
-  return state.puzzlePiecesCollected >= 5 || clueCount(state) >= 4;
+  return (state.case?.lockedGroups.length ?? 0) >= FINALE_MIN_GROUPS;
 }
 
 export function inspectCost(): number {

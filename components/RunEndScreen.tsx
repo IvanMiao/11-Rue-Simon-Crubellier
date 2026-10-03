@@ -11,6 +11,13 @@ interface RunEndScreenProps {
 const RunEndScreen: React.FC<RunEndScreenProps> = ({ state, onAgain }) => {
   const status = state.runStatus;
   if (status !== 'solved' && status !== 'midnight' && status !== 'collapsed') return null;
+  const lockedGroups = state.case?.lockedGroups.length ?? 0;
+  const title =
+    status === 'solved' && state.case?.grade === 3
+      ? '完整结案'
+      : status === 'solved' && state.case?.grade === 2
+        ? '残缺的结案'
+        : endingTitle(status);
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#eae7dc] p-6">
@@ -19,11 +26,12 @@ const RunEndScreen: React.FC<RunEndScreenProps> = ({ state, onAgain }) => {
           {status === 'solved' ? 'Ending · Solved' : status === 'midnight' ? 'Ending · Time' : 'Ending · Morale'}
           {' · '}SEED {formatSeed(state.runSeed)}
         </p>
-        <h1 className="font-serif text-4xl md:text-6xl font-bold mb-6">{endingTitle(status)}</h1>
+        <h1 className="font-serif text-4xl md:text-6xl font-bold mb-6">{title}</h1>
         <p className="font-serif text-lg leading-loose text-stone-700 mb-8">{endingBody(status)}</p>
         <div className="font-typewriter text-xs text-stone-500 space-y-1 mb-10">
           <div>走访房间 {state.roomsVisitedCount}</div>
           <div>线索 {state.discoveredFacts.length} · 拼图片 {state.puzzlePiecesCollected}</div>
+          {(status === 'midnight' || status === 'collapsed') && <div>锁定 {lockedGroups}/3 组</div>}
           <div>检定 {state.checkLog.filter((c) => c.success).length}/{state.checkLog.length} 成功</div>
         </div>
         <button

@@ -88,18 +88,9 @@ export const FALLBACK_BIBLE: StoryBible = {
 
 export const FINALE_INTERACTION: Interaction = {
   id: '100-1-finale',
-  label: '把缺的那一块按进最后的空洞',
-  type: 'check',
-  skill: 'constraint',
-  difficulty: 'formidable',
-  kind: 'red',
-  response: '你举起那一块。',
-  success_response: '空洞接受了它。不是因为形状对了，是因为你允许缺口存在。整栋楼在二十点整轻轻点头。',
-  failure_response: '它滑开了。午夜更近。你还可以再找一块别的缺。',
-  plot_flag: 'thread-puzzle',
-  clue: '第一百把钥匙不是物件，是承认缺口的那一秒钟。',
-  resolves_mystery: true,
-  morale_on_fail: -1,
+  label: '合上案卷',
+  type: 'action',
+  response: '你把案卷合上。',
 };
 
 const clampMorale = (value: number | undefined): number | undefined =>

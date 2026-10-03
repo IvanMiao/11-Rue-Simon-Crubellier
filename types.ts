@@ -1,3 +1,5 @@
+import type { CaseState } from './case/types';
+
 export interface RoomData {
   id: string;
   name: string; // The name on the map (e.g., BARTLEBOOTH)
@@ -195,7 +197,7 @@ export interface PlayerState {
   plotThreads: PlotThreadState[];
   thoughts: Thought[];
   discoveredFacts: string[];
-  finaleFactsAtAttempt?: number;
+  case?: CaseState;
   checkLog: CheckLogEntry[];
   xp: number;
   pendingSkillPoints: number;

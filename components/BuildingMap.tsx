@@ -2,13 +2,14 @@ import React from 'react';
 import { RoomData } from '../types';
 import { BUILDING_LAYOUT } from '../constants';
 import { ReachableMap } from '../utils/gridLogic';
+import { CASE_ROOM_IDS } from '../case/buildCase';
 
 interface BuildingMapProps {
   onRoomSelect: (room: RoomData) => void;
   selectedRoomId: string | null;
   visitedRoomIds: Set<string>;
   reachable: ReachableMap;
-  puzzlePiecesCollected: number;
+  caseEvidenceRoomIds: string[];
   onBlocked?: (room: RoomData) => void;
 }
 
@@ -17,12 +18,12 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
   selectedRoomId,
   visitedRoomIds,
   reachable,
-  puzzlePiecesCollected,
+  caseEvidenceRoomIds,
   onBlocked,
 }) => {
   const floors = [8, 7, 6, 5, 4, 3, 2, 1, 0, -1];
 
-  if (puzzlePiecesCollected >= 5 || reachable.all.has('100-1')) {
+  if (reachable.all.has('100-1') || selectedRoomId === '100-1') {
     floors.unshift(100);
   }
 
@@ -48,10 +49,13 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
               const isWalk = reachable.walk.has(room.id);
               const isLift = reachable.elevator.has(room.id);
               const isReachable = reachable.all.has(room.id) || isSelected;
+              const isCaseRoom = CASE_ROOM_IDS.includes(room.id as (typeof CASE_ROOM_IDS)[number]);
+              const hasEvidence = isCaseRoom && caseEvidenceRoomIds.includes(room.id);
 
               return (
                 <button
                   key={room.id}
+                  aria-label={`${room.name || '未标名'}${hasEvidence ? '，有未取证据' : ''}`}
                   onClick={() => {
                     if (isSelected) return;
                     if (isReachable) onRoomSelect(room);
@@ -80,6 +84,7 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
                                    : 'bg-[#f4f1ea] text-stone-300'
                      }
                      ${!isReachable && !isSelected ? 'cursor-not-allowed opacity-70' : ''}
+                     ${isCaseRoom && !hasEvidence ? 'opacity-60 saturate-50' : ''}
                    `}
                 >
                   <span
@@ -96,6 +101,12 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
                   )}
                   {isKnight && !isSelected && (
                     <span className="absolute top-1 right-1 text-[8px] text-amber-700 font-typewriter">♞</span>
+                  )}
+                  {hasEvidence && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-1 left-1 h-2.5 w-2.5 border border-amber-700 bg-amber-200 shadow-[0_0_7px_rgba(251,191,36,0.9)]"
+                    />
                   )}
                 </button>
               );
