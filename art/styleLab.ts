@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { InkRenderer } from './inkPass';
 import { buildBuilding } from './room';
-import { skylineTexture } from './textures';
-import { LIGHT_2000, PALETTE, RESIDENTS } from './palette';
+import { labelTexture, skylineTexture } from './textures';
+import { PROP_LIBRARY } from './props';
+import { CAST, CAST_ORDER } from './cast';
+import { sectionBox, toonMaterial } from './materials';
+import { LIGHT_2000, PALETTE } from './palette';
 
-type ViewName = 'room' | 'section';
+type ViewName = 'room' | 'section' | 'props';
+const VIEW_NAMES: ViewName[] = ['room', 'section', 'props'];
 interface View { center: THREE.Vector3; height: number; title: string; meta: string }
 
 async function main() {
@@ -56,11 +60,44 @@ async function main() {
   scene.add(fill);
   renderer.shadowMap.needsUpdate = true;
 
+  // prop library: two display shelves, shown in place of the building
+  const propSheet = new THREE.Group();
+  const perRow = 5;
+  const gap = 2.5;
+  const shelfY = [3.3, 0];
+  shelfY.forEach((y) => {
+    const plinth = sectionBox(perRow * gap + 0.4, 0.3, 2.2, toonMaterial(PALETTE.paperDeep));
+    plinth.position.set(0, y - 0.15, 0);
+    propSheet.add(plinth);
+  });
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(perRow * gap + 6, 14), toonMaterial(PALETTE.plaster));
+  back.position.set(0, 1.6, -1.1);
+  back.receiveShadow = true;
+  propSheet.add(back);
+  PROP_LIBRARY.forEach((p, i) => {
+    const x = (((i % perRow) - (perRow - 1) / 2) * gap);
+    const y = shelfY[Math.floor(i / perRow)];
+    const o = p.build();
+    o.position.set(x, y, -0.15);
+    o.rotation.y = -0.35;
+    propSheet.add(o);
+    const label = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.9, 0.22),
+      new THREE.MeshBasicMaterial({ map: labelTexture(p.label, { w: 760, h: 88, font: "500 46px 'Noto Serif CJK SC', serif" }) })
+    );
+    label.position.set(x, y - 0.15, 1.102);
+    propSheet.add(label);
+  });
+  propSheet.position.set(center.x, center.y - 2.2, 0);
+  propSheet.visible = false;
+  scene.add(propSheet);
+
   const views: Record<ViewName, View> = {
     room: { center: building.focus.clone(), height: 4.9, title: 'III · 巴特尔布思的工作室', meta: '1975 年 6 月 23 日 · 20:00 · 时间静止' },
     section: { center: new THREE.Vector3(center.x, center.y + 0.15, 0), height: size.y + 2.6, title: '剖面 · 二至四层', meta: '九个房间 · 同一秒钟 · 骑士在 III 层' },
+    props: { center: new THREE.Vector3(center.x, center.y - 0.2, 0), height: 8.6, title: '道具库', meta: `${PROP_LIBRARY.length} 件参数化道具 · 盖布保留家具轮廓` },
   };
-  let current: ViewName = params.get('view') === 'section' ? 'section' : 'room';
+  let current: ViewName = VIEW_NAMES.find((v) => v === params.get('view')) ?? 'room';
   const live = { center: views[current].center.clone(), height: views[current].height };
 
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 90);
@@ -73,6 +110,10 @@ async function main() {
   const metaEl = document.getElementById('meta')!;
   const setView = (v: ViewName) => {
     current = v;
+    building.group.visible = v !== 'props';
+    sky.visible = v !== 'props';
+    propSheet.visible = v === 'props';
+    renderer.shadowMap.needsUpdate = true;
     titleEl.textContent = views[v].title;
     metaEl.textContent = views[v].meta;
     document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((el) => el.classList.toggle('on', el.dataset.view === v));
@@ -82,13 +123,15 @@ async function main() {
   window.addEventListener('keydown', (e) => {
     if (e.key === '1') setView('room');
     if (e.key === '2') setView('section');
+    if (e.key === '3') location.href = '/cast.html';
+    if (e.key === '4') setView('props');
   });
   window.addEventListener('pointermove', (e) => pointer.set((e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1));
 
   const legend = document.getElementById('legend')!;
   const chips: [string, string][] = [
     ['墨线', PALETTE.ink], ['纸', PALETTE.paper], ['墙', PALETTE.wall], ['地板', PALETTE.floor], ['20:00 光', PALETTE.light], ['天', PALETTE.sky],
-    ...Object.values(RESIDENTS).map((r) => [r.name, r.coat] as [string, string]),
+    ...CAST_ORDER.map((id) => [CAST[id].name, CAST[id].color] as [string, string]),
   ];
   legend.innerHTML = chips.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('');
 

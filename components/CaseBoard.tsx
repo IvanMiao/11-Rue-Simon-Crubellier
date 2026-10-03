@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { CaseCard, CaseGraph, CaseState, CardKind } from '../case/types';
 import { TIME_COMBINE, TIME_SUBMIT } from '../constants/skills';
+import { cardIconUrl } from '../art/cardIcons';
 
 interface CaseBoardProps {
   graph: CaseGraph;
@@ -90,7 +91,19 @@ const CaseBoard: React.FC<CaseBoardProps> = ({
                           placed ? 'text-stone-900' : 'text-stone-400'
                         }`}
                       >
-                        {placed ? cardById.get(placed)?.label : '＿＿＿'}
+                        {placed ? (
+                          <>
+                            <img
+                              src={cardIconUrl(placed)}
+                              alt=""
+                              aria-hidden="true"
+                              className="w-7 h-7 shrink-0"
+                            />
+                            {cardById.get(placed)?.label}
+                          </>
+                        ) : (
+                          '＿＿＿'
+                        )}
                       </button>
                       <span>{parts[1]}</span>
                       {!locked && openSlotId === slot.id && (
@@ -103,8 +116,14 @@ const CaseBoard: React.FC<CaseBoardProps> = ({
                                 onPlaceCard(slot.id, card.id);
                                 setOpenSlotId(null);
                               }}
-                              className="min-h-11 px-3 border border-stone-400 bg-white font-typewriter text-xs hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700 focus-visible:outline-offset-2"
+                              className="inline-flex min-h-11 items-center gap-2 px-3 border border-stone-400 bg-white font-typewriter text-xs hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700 focus-visible:outline-offset-2"
                             >
+                              <img
+                                src={cardIconUrl(card.id)}
+                                alt=""
+                                aria-hidden="true"
+                                className="w-7 h-7 shrink-0"
+                              />
                               {card.label}
                             </button>
                           ))}
@@ -176,12 +195,18 @@ const CaseBoard: React.FC<CaseBoardProps> = ({
                         key={card!.id}
                         aria-pressed={selectedCards.includes(card!.id)}
                         onClick={() => toggleCard(card!.id)}
-                        className={`min-h-11 px-3 border font-serif text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700 focus-visible:outline-offset-2 ${
+                        className={`inline-flex min-h-11 items-center gap-2 px-3 border font-serif text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700 focus-visible:outline-offset-2 ${
                           selectedCards.includes(card!.id)
                             ? 'border-amber-800 bg-amber-100 text-stone-900'
                             : 'border-stone-300 bg-white text-stone-700 hover:bg-stone-100'
                         }`}
                       >
+                        <img
+                          src={cardIconUrl(card!.id)}
+                          alt=""
+                          aria-hidden="true"
+                          className="w-7 h-7 shrink-0"
+                        />
                         {card!.label}
                       </button>
                     ))}
