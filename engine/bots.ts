@@ -1,57 +1,29 @@
-import { DIFFICULTY_DC, SKILL_MAX } from '../constants/skills';
-import { ARCHETYPES, DEFAULT_SKILLS, SKILL_ORDER } from '../constants/skills';
+import { ARCHETYPES, DEFAULT_SKILLS, SKILL_MAX } from '../constants/skills';
 import { BUILDING_LAYOUT } from '../constants';
-import { Character, Interaction, PlayerState, RunStatus, SkillId } from '../types';
-import { getReachableRooms } from '../utils/gridLogic';
-import {
-  INITIAL_PLAYER_STATE,
-  hundredthUnlocked,
-  skillValue,
-} from '../utils/gameLogic';
-import { fallbackBibleForSeed, fallbackRoom, FINALE_INTERACTION } from '../utils/fallbackContent';
+import type { Character, PlayerState, RunStatus, SkillId } from '../types';
+import { describeMove, getReachableRooms } from '../utils/gridLogic';
+import { INITIAL_PLAYER_STATE, hundredthUnlocked, moveTimeCost } from '../utils/gameLogic';
+import { fallbackRoom } from '../utils/fallbackContent';
 import { mulberry32 } from '../utils/rng';
+import { buildCase, caseBible, caseRoomContent, CASE_ROOM_IDS } from '../case/buildCase';
+import type { CaseEvidence, CaseGraph } from '../case/types';
 import { Action } from './types';
-import { step } from './step';
+import { isCombineAvailable, isInteractionAvailable, step } from './step';
 
 export type Bot = (state: PlayerState, actions: Action[], random: () => number) => Action | null;
 
-function finaleReady(state: PlayerState): boolean {
-  return (
-    state.finaleFactsAtAttempt === undefined ||
-    state.discoveredFacts.length > state.finaleFactsAtAttempt
-  );
+function randomIndex(random: () => number, length: number): number {
+  return Math.floor(random() * length);
 }
 
-function availableChecks(state: PlayerState): Array<{ id: string; interaction: Interaction }> {
+function currentInteractions(state: PlayerState): Action[] {
   const roomId = state.currentRoomId;
   const room = roomId ? state.visitedRooms[roomId] : undefined;
   if (!roomId || !room) return [];
   return (room.available_interactions || [])
-    .map((interaction) => ({ id: interaction.id || interaction.label, interaction }))
-    .filter(({ id, interaction }) => {
-      if (!interaction.skill || !interaction.difficulty) return false;
-      const key = `${roomId}::${id}`;
-      if (state.resolvedChecks[key] === true) return false;
-      if ((room.consumed_interaction_ids || []).includes(id)) return false;
-      if (
-        roomId === '100-1' &&
-        id === FINALE_INTERACTION.id &&
-        !finaleReady(state)
-      ) {
-        return false;
-      }
-      if (interaction.kind === 'red' && state.attemptedRedChecks.includes(key)) {
-        const retryingFinale =
-          roomId === '100-1' && id === FINALE_INTERACTION.id && finaleReady(state);
-        if (!retryingFinale) return false;
-      }
-      const tries = state.checkLog.filter(
-        (entry) => entry.roomId === roomId && entry.label === interaction.label
-      ).length;
-      if ((interaction.kind || 'white') === 'white' && tries >= 3) return false;
-      if (state.morale <= 1 && id !== FINALE_INTERACTION.id) return false;
-      return true;
-    });
+    .map((interaction) => interaction.id || interaction.label)
+    .filter((interactionId) => isInteractionAvailable(state, interactionId))
+    .map((interactionId) => ({ type: 'interact' as const, interactionId }));
 }
 
 function moveOptions(state: PlayerState, excludeFinale = false): string[] {
@@ -80,7 +52,7 @@ function pickMove(
     if (knightMoves.length > 0) candidates = knightMoves;
   }
   if (candidates.length === 0) return null;
-  return { type: 'move', roomId: candidates[Math.floor(random() * candidates.length)] };
+  return { type: 'move', roomId: candidates[randomIndex(random, candidates.length)] };
 }
 
 function supportActions(state: PlayerState, random: () => number): Action[] {
@@ -96,118 +68,381 @@ function supportActions(state: PlayerState, random: () => number): Action[] {
   if (state.pendingSkillPoints > 0 && state.character) {
     const skills = Object.keys(state.character.skills) as SkillId[];
     const availableSkills = skills.filter((id) => state.character!.skills[id] < SKILL_MAX);
-    const skill = availableSkills[Math.floor(random() * availableSkills.length)];
+    const skill = availableSkills[randomIndex(random, availableSkills.length)];
     if (skill) actions.push({ type: 'spendPoint', skill });
   }
   return actions;
 }
 
-function pickBestCheck(state: PlayerState): Action | null {
-  const candidates = availableChecks(state);
-  if (candidates.length === 0) return null;
-  const probability = ({ interaction }: { interaction: Interaction }) => {
-    const totalNeeded =
-      DIFFICULTY_DC[interaction.difficulty!] -
-      skillValue(state, interaction.skill!);
-    let successes = 0;
-    for (let die1 = 1; die1 <= 6; die1 += 1) {
-      for (let die2 = 1; die2 <= 6; die2 += 1) {
-        if (die1 + die2 >= totalNeeded) successes += 1;
+function caseEvidenceAvailable(state: PlayerState, graph: CaseGraph, evidence: CaseEvidence): boolean {
+  const room = state.visitedRooms[evidence.roomId] || caseRoomContent(graph, evidence.roomId);
+  const candidateState: PlayerState = {
+    ...state,
+    currentRoomId: evidence.roomId,
+    visitedRooms: state.visitedRooms[evidence.roomId]
+      ? state.visitedRooms
+      : { ...state.visitedRooms, [evidence.roomId]: room },
+  };
+  return isInteractionAvailable(candidateState, evidence.id);
+}
+
+function neededCaseCards(state: PlayerState, graph: CaseGraph): Set<string> {
+  if (!state.case) return new Set();
+  const needed = new Set(
+    graph.slots
+      .filter((slot) => !state.case!.lockedGroups.includes(slot.groupId))
+      .map((slot) => slot.answer)
+      .filter((cardId) => !state.case!.cards.includes(cardId))
+  );
+  let changed = true;
+  while (changed) {
+    changed = false;
+    graph.recipes.forEach((recipe) => {
+      if (
+        state.case!.usedRecipes.includes(recipe.id) ||
+        !recipe.cards.some((cardId) => needed.has(cardId))
+      ) {
+        return;
       }
+      recipe.pair.forEach((cardId) => {
+        if (!state.case!.cards.includes(cardId) && !needed.has(cardId)) {
+          needed.add(cardId);
+          changed = true;
+        }
+      });
+    });
+  }
+  return needed;
+}
+
+function evidenceProvidesNeededCard(
+  state: PlayerState,
+  evidence: CaseEvidence,
+  needed: Set<string>
+): boolean {
+  if (!state.case || needed.size === 0) return true;
+  return [...evidence.cards, ...(evidence.failCards || [])].some(
+    (cardId) => needed.has(cardId) && !state.case!.cards.includes(cardId)
+  );
+}
+
+function availableEvidenceRooms(
+  state: PlayerState,
+  graph: CaseGraph,
+  needed?: Set<string>
+): string[] {
+  return [
+    ...new Set(
+      graph.evidence
+        .filter((evidence) => caseEvidenceAvailable(state, graph, evidence))
+        .filter((evidence) => !needed || evidenceProvidesNeededCard(state, evidence, needed))
+        .map((evidence) => evidence.roomId)
+    ),
+  ];
+}
+
+function nextStepTo(state: PlayerState, targets: string[]): Action | null {
+  const start = state.currentRoomId;
+  if (!start || targets.length === 0) return null;
+  const targetSet = new Set(targets.filter((target) => target !== start));
+  if (!targetSet.size) return null;
+  const distances = new Map<string, number>([[start, 0]]);
+  const firstHop = new Map<string, string>();
+  const visited = new Set<string>();
+
+  while (true) {
+    let current: string | undefined;
+    let shortest = Number.POSITIVE_INFINITY;
+    distances.forEach((distance, roomId) => {
+      if (!visited.has(roomId) && distance < shortest) {
+        shortest = distance;
+        current = roomId;
+      }
+    });
+    if (!current) return null;
+    if (targetSet.has(current)) {
+      const roomId = firstHop.get(current);
+      return roomId ? { type: 'move', roomId } : null;
     }
-    return successes / 36;
-  };
-  candidates.sort((left, right) => probability(right) - probability(left));
-  return {
-    type: 'interact',
-    interactionId: candidates[0].id,
-  };
+    visited.add(current);
+    const reachable = getReachableRooms(current, {
+      hundredthUnlocked: hundredthUnlocked(state),
+    });
+    reachable.all.forEach((neighbor) => {
+      if (visited.has(neighbor)) return;
+      const kind = describeMove(reachable, neighbor);
+      if (kind === 'blocked') return;
+      const distance = shortest + moveTimeCost(kind);
+      if (distance < (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) {
+        distances.set(neighbor, distance);
+        firstHop.set(neighbor, current === start ? neighbor : firstHop.get(current)!);
+      }
+    });
+  }
+}
+
+function hasCloseCondition(state: PlayerState): boolean {
+  const groups = state.case?.lockedGroups.length ?? 0;
+  return groups === 3 || (groups >= 2 && state.minutesPastEight >= 180);
+}
+
+function nextSkillPoint(state: PlayerState): SkillId | null {
+  if (!state.character || state.pendingSkillPoints <= 0 || !state.case) return null;
+  const priorities: SkillId[] = [state.case.handSkill, 'inland', 'encyclopedia'];
+  return priorities.find((skill) => state.character!.skills[skill] < SKILL_MAX) || null;
+}
+
+function currentCaseEvidence(
+  state: PlayerState,
+  graph: CaseGraph,
+  kind: 'look' | 'check',
+  needed?: Set<string>
+): Action | null {
+  const roomId = state.currentRoomId;
+  if (!roomId) return null;
+  const evidence = graph.evidence.find(
+    (candidate) =>
+      candidate.roomId === roomId &&
+      candidate.kind === kind &&
+      isInteractionAvailable(state, candidate.id) &&
+      (!needed || evidenceProvidesNeededCard(state, candidate, needed))
+  );
+  return evidence ? { type: 'interact', interactionId: evidence.id } : null;
+}
+
+function fallbackMove(state: PlayerState, random: () => number): Action | null {
+  return pickMove(state, random, { preferUnvisited: true }) || pickMove(state, random);
+}
+
+function randomBoardAction(state: PlayerState, graph: CaseGraph, random: () => number): Action | null {
+  if (!state.case) return null;
+  const availableSlots = graph.slots.filter(
+    (slot) => !state.case!.lockedGroups.includes(slot.groupId)
+  );
+  if (availableSlots.length && state.case.cards.length) {
+    const slot = availableSlots[randomIndex(random, availableSlots.length)];
+    const occupiedElsewhere = new Set(
+      Object.entries(state.case.slots)
+        .filter(([slotId, cardId]) => slotId !== slot.id && cardId)
+        .map(([, cardId]) => cardId!)
+    );
+    const candidates = state.case.cards.filter((cardId) => {
+      const card = graph.cards.find((candidate) => candidate.id === cardId);
+      return Boolean(card && slot.accepts.includes(card.kind) && !occupiedElsewhere.has(cardId));
+    });
+    if (candidates.length) {
+      return {
+        type: 'placeCard',
+        slotId: slot.id,
+        cardId: candidates[randomIndex(random, candidates.length)],
+      };
+    }
+  }
+  if (state.case.cards.length >= 2 && random() < 0.5) {
+    const aIndex = randomIndex(random, state.case.cards.length);
+    const bChoices = state.case.cards.filter((_, index) => index !== aIndex);
+    if (bChoices.length) {
+      return { type: 'combine', a: state.case.cards[aIndex], b: bChoices[randomIndex(random, bChoices.length)] };
+    }
+  }
+  const fullGroup = graph.groups.find(
+    (group) =>
+      !state.case!.lockedGroups.includes(group.id) &&
+      group.slots.every((slot) => Boolean(state.case!.slots[slot.id]))
+  );
+  return fullGroup ? { type: 'submitGroup', groupId: fullGroup.id } : null;
 }
 
 export const randomBot: Bot = (state, _actions, random) => {
   if (state.runStatus !== 'playing') return null;
   const options = supportActions(state, random);
-  const check = pickBestCheck(state);
-  if (check) options.push(check);
+  options.push(...currentInteractions(state));
+  const graph = state.case ? buildCase(state.runSeed) : null;
+  if (graph) {
+    const board = randomBoardAction(state, graph, random);
+    if (board) options.push(board);
+  }
   const move = pickMove(state, random);
   if (move) options.push(move);
-  return options[Math.floor(random() * options.length)] || null;
+  return options[randomIndex(random, options.length)] || null;
 };
 
-export const knightBot: Bot = (state, _actions, random) => {
-  if (state.runStatus !== 'playing') return null;
-  const roomId = state.currentRoomId;
-  if (roomId === '100-1') {
-    if (
-      finaleReady(state) &&
-      availableChecks(state).some(({ id }) => id === FINALE_INTERACTION.id)
-    ) {
-      return { type: 'interact', interactionId: FINALE_INTERACTION.id };
+export const caseBot: Bot = (state, _actions, random) => {
+  if (state.runStatus !== 'playing' || !state.case) return null;
+  const graph = buildCase(state.runSeed);
+
+  const recipe = graph.recipes.find(
+    (candidate) =>
+      !state.case!.usedRecipes.includes(candidate.id) &&
+      candidate.pair.every((cardId) => state.case!.cards.includes(cardId))
+  );
+  if (recipe) return { type: 'combine', a: recipe.pair[0], b: recipe.pair[1] };
+
+  const answerSlot = graph.slots.find((slot) => {
+    if (state.case!.lockedGroups.includes(slot.groupId)) return false;
+    if (!state.case!.cards.includes(slot.answer) || state.case!.slots[slot.id] === slot.answer) {
+      return false;
     }
-    return pickMove(state, random, { preferUnvisited: true, preferKnight: true, excludeFinale: true });
-  }
-  const collectible = roomId ? state.visitedRooms[roomId]?.collectible_item : undefined;
-  if (collectible && !state.inventory.some((item) => item.id === collectible.id)) {
-    return { type: 'collect', itemId: collectible.id };
-  }
-  const check = pickBestCheck(state);
+    return true;
+  });
+  if (answerSlot) return { type: 'placeCard', slotId: answerSlot.id, cardId: answerSlot.answer };
+
+  const correctGroup = graph.groups.find(
+    (group) =>
+      !state.case!.lockedGroups.includes(group.id) &&
+      group.slots.every((slot) => state.case!.slots[slot.id] === slot.answer)
+  );
+  if (correctGroup) return { type: 'submitGroup', groupId: correctGroup.id };
+
+  const needed = neededCaseCards(state, graph);
+  const look = currentCaseEvidence(state, graph, 'look', needed);
+  if (look) return look;
+  const check = currentCaseEvidence(state, graph, 'check', needed);
   if (check) return check;
-  const thought = state.thoughts.find((candidate) => !candidate.internalized);
-  if (thought) return { type: 'internalize', thoughtId: thought.id };
-  if (state.pendingSkillPoints > 0 && state.character) {
-    const skill =
-      state.character.skills.constraint < SKILL_MAX
-        ? 'constraint'
-        : (Object.keys(state.character.skills) as SkillId[]).find(
-            (id) => state.character!.skills[id] < SKILL_MAX
-          );
-    if (skill) return { type: 'spendPoint', skill };
-  }
-  if (hundredthUnlocked(state) && finaleReady(state)) {
-    const reachable = getReachableRooms(roomId, { hundredthUnlocked: true });
-    if (reachable.all.has('100-1')) return { type: 'move', roomId: '100-1' };
-  }
-  return pickMove(state, random, { preferUnvisited: true, preferKnight: true });
-};
 
-export const detectiveBot: Bot = (state, _actions, random) => {
-  if (state.runStatus !== 'playing') return null;
-  const roomId = state.currentRoomId;
+  const skill = nextSkillPoint(state);
+  if (skill) return { type: 'spendPoint', skill };
 
-  if (roomId === '100-1') {
-    if (finaleReady(state)) {
-      const finale = state.visitedRooms[roomId]?.available_interactions?.find(
-        (interaction) => interaction.id === FINALE_INTERACTION.id
+  const lockedCount = state.case.lockedGroups.length;
+  const evidenceRooms = availableEvidenceRooms(state, graph, needed);
+  if (state.currentRoomId === '100-1' && hasCloseCondition(state)) {
+    return isInteractionAvailable(state, '100-1-finale')
+      ? { type: 'interact', interactionId: '100-1-finale' }
+      : fallbackMove(state, random);
+  }
+  if (hasCloseCondition(state) && state.currentRoomId !== '100-1') {
+    return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+  }
+  if (evidenceRooms.length) return nextStepTo(state, evidenceRooms) || fallbackMove(state, random);
+  if (lockedCount >= 2) {
+    if (state.currentRoomId === '100-1' && state.minutesPastEight < 180) {
+      return (
+        getReachableRooms(state.currentRoomId, { hundredthUnlocked: true }).walk.has('0-5')
+          ? { type: 'move', roomId: '0-5' }
+          : fallbackMove(state, random)
       );
-      if (
-        finale &&
-        availableChecks(state).some(({ id }) => id === FINALE_INTERACTION.id)
-      ) {
-        return { type: 'interact', interactionId: FINALE_INTERACTION.id };
-      }
     }
-    return pickMove(state, random, { preferUnvisited: true, excludeFinale: true });
+    if (state.currentRoomId !== '100-1') {
+      return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+    }
   }
+  return fallbackMove(state, random);
+};
 
-  const support = supportActions(state, random);
-  const collectible = support.find((action) => action.type === 'collect');
-  if (collectible) return collectible;
-  if (state.pendingSkillPoints > 0 && state.character) {
-    const constraint = state.character.skills.constraint < SKILL_MAX ? 'constraint' : null;
-    if (constraint) return { type: 'spendPoint', skill: constraint };
+function roomsWithCombineAction(actions: Action[]): Set<string> {
+  let roomId = '0-5';
+  const rooms = new Set<string>();
+  actions.forEach((action) => {
+    if (action.type === 'startRun') roomId = '0-5';
+    if (action.type === 'move') roomId = action.roomId;
+    if (action.type === 'combine' && CASE_ROOM_IDS.includes(roomId as (typeof CASE_ROOM_IDS)[number])) {
+      rooms.add(roomId);
+    }
+  });
+  return rooms;
+}
+
+function randomCombineForRoom(
+  state: PlayerState,
+  actions: Action[],
+  random: () => number
+): Action | null {
+  const roomId = state.currentRoomId;
+  if (
+    !state.case ||
+    !roomId ||
+    !CASE_ROOM_IDS.includes(roomId as (typeof CASE_ROOM_IDS)[number]) ||
+    roomsWithCombineAction(actions).has(roomId)
+  ) {
+    return null;
   }
-  const thought = support.find((action) => action.type === 'internalize');
-  if (thought) return thought;
+  const owned = state.case.cards;
+  if (owned.length < 2) return null;
+  const pairs: [string, string][] = [];
+  for (let i = 0; i < owned.length; i += 1) {
+    for (let j = i + 1; j < owned.length; j += 1) {
+      const a = owned[i];
+      const b = owned[j];
+      if (isCombineAvailable(state, a, b)) pairs.push([a, b]);
+    }
+  }
+  if (!pairs.length) return null;
+  const [a, b] = pairs[randomIndex(random, pairs.length)];
+  return { type: 'combine', a, b };
+}
 
-  const check = pickBestCheck(state);
+function randomGuessBoardAction(
+  state: PlayerState,
+  graph: CaseGraph,
+  actions: Action[],
+  random: () => number
+): Action | null {
+  if (!state.case) return null;
+  for (const group of graph.groups) {
+    if (state.case.lockedGroups.includes(group.id)) continue;
+    const full = group.slots.every((slot) => Boolean(state.case!.slots[slot.id]));
+    if (!full) {
+      const slot = group.slots.find((candidate) => !state.case!.slots[candidate.id]);
+      if (!slot) continue;
+      const occupied = new Set(Object.values(state.case.slots).filter((id): id is string => Boolean(id)));
+      const candidates = state.case.cards.filter((cardId) => {
+        const card = graph.cards.find((candidate) => candidate.id === cardId);
+        return Boolean(card && slot.accepts.includes(card.kind) && !occupied.has(cardId));
+      });
+      if (candidates.length) {
+        return {
+          type: 'placeCard',
+          slotId: slot.id,
+          cardId: candidates[randomIndex(random, candidates.length)],
+        };
+      }
+      continue;
+    }
+    if (!actions.some((action) => action.type === 'submitGroup' && action.groupId === group.id)) {
+      return { type: 'submitGroup', groupId: group.id };
+    }
+  }
+  return null;
+}
+
+export const guessBot: Bot = (state, actions, random) => {
+  if (state.runStatus !== 'playing' || !state.case) return null;
+  const graph = buildCase(state.runSeed);
+  const look = currentCaseEvidence(state, graph, 'look');
+  if (look) return look;
+  const check = currentCaseEvidence(state, graph, 'check');
   if (check) return check;
+  const combine = randomCombineForRoom(state, actions, random);
+  if (combine) return combine;
+  const board = randomGuessBoardAction(state, graph, actions, random);
+  if (board) return board;
+  const skill = nextSkillPoint(state);
+  if (skill) return { type: 'spendPoint', skill };
 
-  if (hundredthUnlocked(state) && finaleReady(state)) {
-    const reachable = getReachableRooms(roomId, { hundredthUnlocked: true });
-    if (reachable.all.has('100-1')) return { type: 'move', roomId: '100-1' };
+  const lockedCount = state.case.lockedGroups.length;
+  if (state.currentRoomId === '100-1' && hasCloseCondition(state)) {
+    return isInteractionAvailable(state, '100-1-finale')
+      ? { type: 'interact', interactionId: '100-1-finale' }
+      : fallbackMove(state, random);
   }
-
-  return pickMove(state, random, { preferUnvisited: true });
+  if (hasCloseCondition(state) && state.currentRoomId !== '100-1') {
+    return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+  }
+  const evidenceRooms = availableEvidenceRooms(state, graph);
+  if (evidenceRooms.length) return nextStepTo(state, evidenceRooms) || fallbackMove(state, random);
+  if (lockedCount >= 2) {
+    if (state.currentRoomId === '100-1' && state.minutesPastEight < 180) {
+      return (
+        getReachableRooms(state.currentRoomId, { hundredthUnlocked: true }).walk.has('0-5')
+          ? { type: 'move', roomId: '0-5' }
+          : fallbackMove(state, random)
+      );
+    }
+    if (state.currentRoomId !== '100-1') {
+      return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
+    }
+  }
+  return fallbackMove(state, random);
 };
 
 export interface BotRunResult {
@@ -216,8 +451,9 @@ export interface BotRunResult {
   rooms: number;
   checks: number;
   minutes: number;
-  unlockAt: number | null;
-  finaleAttempts: number;
+  grade: number | null;
+  lockedGroups: number;
+  wrongSubmissions: number;
   actions: Action[];
   finalState: PlayerState;
 }
@@ -238,17 +474,15 @@ export function runBot(bot: Bot, seed: number, archetypeIdx: number): BotRunResu
   const actions: Action[] = [];
   let state: PlayerState = INITIAL_PLAYER_STATE;
   let trapped = false;
-  let unlockAt: number | null = null;
 
-  const recordUnlock = () => {
-    if (unlockAt === null && hundredthUnlocked(state)) unlockAt = state.minutesPastEight;
-  };
-
-  const applyAction = (action: Action) => {
+  const applyAction = (action: Action): ReturnType<typeof step>['events'] => {
     actions.push(action);
     const result = step(state, action);
     state = result.state;
-    recordUnlock();
+    if (result.events.some((event) => event.type === 'rejected')) {
+      trapped = true;
+      return result.events;
+    }
     result.events.forEach((event) => {
       if (event.type !== 'needsRoomContent') return;
       const room = BUILDING_LAYOUT.find((candidate) => candidate.id === event.roomId);
@@ -265,7 +499,12 @@ export function runBot(bot: Bot, seed: number, archetypeIdx: number): BotRunResu
     return result.events;
   };
 
-  applyAction({ type: 'startRun', character, seed, bible: fallbackBibleForSeed(seed) });
+  applyAction({
+    type: 'startRun',
+    character,
+    seed,
+    bible: caseBible(buildCase(seed)),
+  });
 
   let steps = 0;
   while (state.runStatus === 'playing' && steps < 2000) {
@@ -275,10 +514,7 @@ export function runBot(bot: Bot, seed: number, archetypeIdx: number): BotRunResu
       break;
     }
     const events = applyAction(action);
-    if (events.some((event) => event.type === 'rejected')) {
-      trapped = true;
-      break;
-    }
+    if (events.some((event) => event.type === 'rejected')) break;
     steps += 1;
   }
   if (state.runStatus === 'playing' && steps >= 2000) trapped = true;
@@ -289,11 +525,9 @@ export function runBot(bot: Bot, seed: number, archetypeIdx: number): BotRunResu
     rooms: state.roomsVisitedCount,
     checks: state.checkLog.length,
     minutes: state.minutesPastEight,
-    unlockAt,
-    finaleAttempts: actions.filter(
-      (action) =>
-        action.type === 'interact' && action.interactionId === FINALE_INTERACTION.id
-    ).length,
+    grade: state.case?.grade ?? null,
+    lockedGroups: state.case?.lockedGroups.length ?? 0,
+    wrongSubmissions: state.case?.wrongSubmissions ?? 0,
     actions,
     finalState: state,
   };

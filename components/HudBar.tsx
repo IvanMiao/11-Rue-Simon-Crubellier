@@ -77,9 +77,10 @@ const HudBar: React.FC<HudBarProps> = ({
         )}
         <button
           onClick={onOpenCase}
-          className="font-typewriter text-xs px-3 py-1 border border-stone-400 rounded hover:bg-stone-100 text-stone-600 uppercase tracking-wider"
+          aria-label={`案卷 ${state.case?.lockedGroups.length ?? 0}/3`}
+          className="min-h-11 px-3 border border-stone-400 rounded hover:bg-stone-100 text-stone-600 font-typewriter text-xs uppercase tracking-wider focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700 focus-visible:outline-offset-2"
         >
-          案卷
+          案卷 {state.case?.lockedGroups.length ?? 0}/3
         </button>
         <button
           onClick={onReset}

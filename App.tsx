@@ -16,7 +16,7 @@ import {
   SkillCheckResult,
   SkillId,
 } from './types';
-import { generateRoomDescription, generateStoryBible } from './services/geminiService';
+import { generateRoomDescription } from './services/geminiService';
 import { describeMove, getReachableRooms } from './utils/gridLogic';
 import { hundredthUnlocked } from './utils/gameLogic';
 import { fallbackRoom } from './utils/fallbackContent';
@@ -24,6 +24,8 @@ import { newRunSeed } from './utils/rng';
 import { BUILDING_LAYOUT } from './constants';
 import { Action, GameEvent } from './engine/types';
 import { useGameEngine } from './engine/useGameEngine';
+import { buildCase, caseBible } from './case/buildCase';
+import { isInteractionAvailable } from './engine/step';
 
 interface PendingCheck {
   label: string;
@@ -47,7 +49,6 @@ const App: React.FC = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null);
   const [generatingRoomIds, setGeneratingRoomIds] = useState<Set<string>>(new Set());
-  const [isStartingRun, setIsStartingRun] = useState(false);
   const generatingRef = useRef(new Set<string>());
 
   const gameState = pendingCheck?.before || engineState;
@@ -55,6 +56,26 @@ const App: React.FC = () => {
     () => BUILDING_LAYOUT.find((room) => room.id === gameState.currentRoomId) || null,
     [gameState.currentRoomId]
   );
+  const caseGraph = useMemo(
+    () => (gameState.case ? buildCase(gameState.runSeed) : null),
+    [gameState.runSeed, gameState.case?.liar]
+  );
+  const caseEvidenceRoomIds = useMemo(() => {
+    if (!caseGraph || !gameState.case) return new Set<string>();
+    return new Set(
+      caseGraph.evidence
+        .filter((evidence) => {
+          if (gameState.case!.takenEvidence.includes(evidence.id)) return false;
+          if (evidence.kind === 'look') return true;
+          if (evidence.checkKind === 'red') {
+            return !gameState.attemptedRedChecks.includes(`${evidence.roomId}::${evidence.id}`);
+          }
+          const retryMark = gameState.case!.retryMarks[evidence.id];
+          return retryMark === undefined || gameState.case!.cards.length > retryMark;
+        })
+        .map((evidence) => evidence.roomId)
+    );
+  }, [caseGraph, gameState.case, gameState.attemptedRedChecks]);
 
   const showToast = useCallback((message: string) => setToast(message), []);
 
@@ -69,7 +90,7 @@ const App: React.FC = () => {
       getReachableRooms(gameState.currentRoomId, {
         hundredthUnlocked: hundredthUnlocked(gameState),
       }),
-    [gameState.currentRoomId, gameState.puzzlePiecesCollected, gameState.discoveredFacts.length]
+    [gameState.currentRoomId, gameState.case?.lockedGroups.length]
   );
 
   const requestRoomContent = useCallback(
@@ -155,13 +176,37 @@ const App: React.FC = () => {
         );
         return;
       }
+      const groupLocked = events.find((event) => event.type === 'groupLocked');
+      if (groupLocked?.type === 'groupLocked') {
+        showToast('这一组对上了。');
+        return;
+      }
+      const groupRejected = events.find((event) => event.type === 'groupRejected');
+      if (groupRejected?.type === 'groupRejected') {
+        showToast('对不上。至少有一格错了。意志 −1');
+        return;
+      }
+      const combined = events.find((event) => event.type === 'combined');
+      if (combined?.type === 'combined') {
+        const graph = buildCase(getState().runSeed);
+        const recipe = graph.recipes.find((candidate) => candidate.id === combined.recipeId);
+        const label = recipe && graph.cards.find((card) => card.id === recipe.cards[0])?.label;
+        showToast(label ? `联想：${label}` : '什么也没联想到。');
+        return;
+      }
+      const cardsFound = events.find((event) => event.type === 'cardsFound');
+      if (cardsFound?.type === 'cardsFound') {
+        const graph = buildCase(getState().runSeed);
+        const labels = cardsFound.cards
+          .map((cardId) => graph.cards.find((card) => card.id === cardId)?.label)
+          .filter((label): label is string => Boolean(label));
+        showToast(`新词卡：${labels.join('、')}`);
+        return;
+      }
       const check = events.find((event) => event.type === 'checkRolled');
       if (check?.type === 'checkRolled') {
-        const finale = check.roomId === '100-1' && check.interactionId === '100-1-finale';
         showToast(
-          check.result.success && finale
-            ? '拼图合上了。'
-            : !check.result.success
+          !check.result.success
               ? '检定失败。意志被削去一角。'
               : events.some((event) => event.type === 'clueFound')
                 ? '新线索已收入案卷。'
@@ -182,7 +227,7 @@ const App: React.FC = () => {
         showToast('念头住进来了。时间少了二十分钟。');
       }
     },
-    [showToast]
+    [getState, showToast]
   );
 
   const dispatchAction = useCallback(
@@ -225,19 +270,11 @@ const App: React.FC = () => {
     }
   }, [engineState.currentRoomId, engineState.runStatus, engineState.visitedRooms, requestRoomContent]);
 
-  const startRunWithCharacter = async (character: Character) => {
+  const startRunWithCharacter = (character: Character) => {
     const seed = newRunSeed();
-    setIsStartingRun(true);
-    try {
-      const bible = await generateStoryBible(seed, character);
-      dispatchAction({ type: 'startRun', character, seed, bible });
-      setIsMobileMapOpen(false);
-    } catch (error) {
-      console.error(error);
-      showToast('故事圣经织不出来。再试一次。');
-    } finally {
-      setIsStartingRun(false);
-    }
+    const bible = caseBible(buildCase(seed));
+    dispatchAction({ type: 'startRun', character, seed, bible });
+    setIsMobileMapOpen(false);
   };
 
   const handleRoomSelect = (room: RoomData) => {
@@ -296,36 +333,13 @@ const App: React.FC = () => {
     const room = gameState.visitedRooms[selectedRoom.id];
     room?.available_interactions?.forEach((interaction) => {
       const id = interaction.id || interaction.label;
-      const key = `${selectedRoom.id}::${id}`;
-      if (gameState.resolvedChecks[key] === true) disabled.add(id);
-      const finaleRearmed =
-        selectedRoom.id === '100-1' &&
-        id === '100-1-finale' &&
-        (gameState.finaleFactsAtAttempt === undefined ||
-          gameState.discoveredFacts.length > gameState.finaleFactsAtAttempt);
-      if (
-        interaction.kind === 'red' &&
-        gameState.attemptedRedChecks.includes(key) &&
-        !finaleRearmed
-      ) {
-        disabled.add(id);
-      }
+      if (!isInteractionAvailable(gameState, id)) disabled.add(id);
     });
     return disabled;
   }, [gameState, selectedRoom]);
 
   if (!isHydrated) {
     return <div className="h-screen w-screen bg-[#eae7dc]" />;
-  }
-
-  if (engineState.runStatus === 'creating' && isStartingRun) {
-    return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#eae7dc] text-stone-800 font-typewriter">
-        <div className="w-16 h-16 border-4 border-stone-800 border-t-transparent rounded-full animate-spin mb-8"></div>
-        <h2 className="text-xl uppercase tracking-widest mb-2">为这一局编织圣经</h2>
-        <p className="text-sm text-stone-500 animate-pulse">种子会决定谁在说谎，哪一块拼图缺席。</p>
-      </div>
-    );
   }
 
   if (engineState.runStatus === 'creating') {
@@ -356,7 +370,7 @@ const App: React.FC = () => {
             selectedRoomId={selectedRoom?.id || gameState.currentRoomId}
             visitedRoomIds={visitedIds}
             reachable={reachable}
-            puzzlePiecesCollected={gameState.puzzlePiecesCollected}
+            caseEvidenceRoomIds={caseEvidenceRoomIds}
             onBlocked={handleBlocked}
           />
         </div>
@@ -389,8 +403,12 @@ const App: React.FC = () => {
         isOpen={isCaseOpen}
         onClose={() => setIsCaseOpen(false)}
         state={gameState}
+        caseGraph={caseGraph}
         onInternalize={(thoughtId) => dispatchAction({ type: 'internalize', thoughtId })}
         onSpendPoint={(skill: SkillId) => dispatchAction({ type: 'spendPoint', skill })}
+        onPlaceCard={(slotId, cardId) => dispatchAction({ type: 'placeCard', slotId, cardId })}
+        onCombine={(a, b) => dispatchAction({ type: 'combine', a, b })}
+        onSubmitGroup={(groupId) => dispatchAction({ type: 'submitGroup', groupId })}
       />
 
       <SkillCheckModal
