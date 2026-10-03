@@ -25,7 +25,7 @@ import { BUILDING_LAYOUT } from './constants';
 import { Action, GameEvent } from './engine/types';
 import { useGameEngine } from './engine/useGameEngine';
 import { buildCase, caseBible } from './case/buildCase';
-import { isInteractionAvailable } from './engine/step';
+import { isInteractionAvailable, roomsWithAvailableEvidence } from './engine/step';
 
 interface PendingCheck {
   label: string;
@@ -60,22 +60,10 @@ const App: React.FC = () => {
     () => (gameState.case ? buildCase(gameState.runSeed) : null),
     [gameState.runSeed, gameState.case?.liar]
   );
-  const caseEvidenceRoomIds = useMemo(() => {
-    if (!caseGraph || !gameState.case) return new Set<string>();
-    return new Set(
-      caseGraph.evidence
-        .filter((evidence) => {
-          if (gameState.case!.takenEvidence.includes(evidence.id)) return false;
-          if (evidence.kind === 'look') return true;
-          if (evidence.checkKind === 'red') {
-            return !gameState.attemptedRedChecks.includes(`${evidence.roomId}::${evidence.id}`);
-          }
-          const retryMark = gameState.case!.retryMarks[evidence.id];
-          return retryMark === undefined || gameState.case!.cards.length > retryMark;
-        })
-        .map((evidence) => evidence.roomId)
-    );
-  }, [caseGraph, gameState.case, gameState.attemptedRedChecks]);
+  const caseEvidenceRoomIds = useMemo(
+    () => roomsWithAvailableEvidence(gameState),
+    [gameState.runSeed, gameState.runStatus, gameState.case, gameState.attemptedRedChecks]
+  );
 
   const showToast = useCallback((message: string) => setToast(message), []);
 
@@ -190,8 +178,11 @@ const App: React.FC = () => {
       if (combined?.type === 'combined') {
         const graph = buildCase(getState().runSeed);
         const recipe = graph.recipes.find((candidate) => candidate.id === combined.recipeId);
-        const label = recipe && graph.cards.find((card) => card.id === recipe.cards[0])?.label;
-        showToast(label ? `联想：${label}` : '什么也没联想到。');
+        const labels =
+          recipe?.cards
+            .map((cardId) => graph.cards.find((card) => card.id === cardId)?.label)
+            .filter((label): label is string => Boolean(label)) || [];
+        showToast(labels.length ? `联想：${labels.join('、')}` : '什么也没联想到。');
         return;
       }
       const cardsFound = events.find((event) => event.type === 'cardsFound');

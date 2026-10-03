@@ -7,7 +7,13 @@ import { INITIAL_PLAYER_STATE } from '../utils/gameLogic';
 import { FINALE_INTERACTION, sanitizeRoomContent } from '../utils/fallbackContent';
 import { createSave, replay } from './save';
 import { caseBot, runBot } from './bots';
-import { isCombineAvailable, isInteractionAvailable, step } from './step';
+import {
+  caseEvidenceAvailable,
+  isCombineAvailable,
+  isInteractionAvailable,
+  roomsWithAvailableEvidence,
+  step,
+} from './step';
 import { Action } from './types';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -76,6 +82,20 @@ assert(started.state.version === 5, 'new runs use save version five');
 assert(started.state.case?.liar === started.graph.liar, 'the seeded case is stored in the run state');
 assert(started.state.discoveredFacts.length === 0, 'the case hook is not a clue');
 assert(started.state.storyBible?.title === '第 439 幅', 'the case bible has the authored title');
+const handEvidence = started.graph.evidence.find((evidence) => evidence.id === 'ev-bb-hand')!;
+const lowMoraleState = { ...atRoom(started.state, '3-1'), morale: 1 };
+assert(
+  roomsWithAvailableEvidence(started.state).includes('3-1'),
+  'case rooms with available evidence are shared with map consumers'
+);
+assert(
+  caseEvidenceAvailable(lowMoraleState, handEvidence),
+  'map evidence availability ignores morale by default'
+);
+assert(
+  !caseEvidenceAvailable(lowMoraleState, handEvidence, { checkMorale: true }),
+  'bot evidence availability applies the morale gate when requested'
+);
 assert(
   started.state.storyBible?.investigator_hook ===
     '一封没有署名的信：二十点整，巴特尔布思死在第 439 幅拼图前。午夜以前，把案卷补完。',

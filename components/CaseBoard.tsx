@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { CaseCard, CaseGraph, CaseState, CardKind } from '../case/types';
+import { TIME_COMBINE, TIME_SUBMIT } from '../constants/skills';
 
 interface CaseBoardProps {
   graph: CaseGraph;
@@ -131,7 +132,7 @@ const CaseBoard: React.FC<CaseBoardProps> = ({
                 onClick={() => onSubmitGroup(group.id)}
                 className="min-h-11 mt-4 px-4 border border-stone-800 bg-stone-800 text-[#f4f1ea] font-typewriter text-xs tracking-wide hover:enabled:bg-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                对照（10 分钟）
+                对照（{TIME_SUBMIT} 分钟）
               </button>
             </section>
           );
@@ -151,7 +152,7 @@ const CaseBoard: React.FC<CaseBoardProps> = ({
             }}
             className="min-h-11 px-4 border border-stone-800 bg-[#e8e2d5] font-typewriter text-xs hover:enabled:bg-amber-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            联想（10 分钟） · {selectedCards.length}/2
+            联想（{TIME_COMBINE} 分钟） · {selectedCards.length}/2
           </button>
         </div>
         {state.cards.length === 0 ? (

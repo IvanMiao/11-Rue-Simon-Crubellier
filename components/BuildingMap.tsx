@@ -9,7 +9,7 @@ interface BuildingMapProps {
   selectedRoomId: string | null;
   visitedRoomIds: Set<string>;
   reachable: ReachableMap;
-  caseEvidenceRoomIds: Set<string>;
+  caseEvidenceRoomIds: string[];
   onBlocked?: (room: RoomData) => void;
 }
 
@@ -50,7 +50,7 @@ const BuildingMap: React.FC<BuildingMapProps> = ({
               const isLift = reachable.elevator.has(room.id);
               const isReachable = reachable.all.has(room.id) || isSelected;
               const isCaseRoom = CASE_ROOM_IDS.includes(room.id as (typeof CASE_ROOM_IDS)[number]);
-              const hasEvidence = isCaseRoom && caseEvidenceRoomIds.has(room.id);
+              const hasEvidence = isCaseRoom && caseEvidenceRoomIds.includes(room.id);
 
               return (
                 <button

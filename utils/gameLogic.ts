@@ -1,5 +1,6 @@
 import {
   BASE_MORALE,
+  FINALE_MIN_GROUPS,
   MINUTES_PER_RUN,
   SKILL_MAX,
   SKILL_ORDER,
@@ -372,7 +373,7 @@ export function clueCount(state: PlayerState): number {
 }
 
 export function hundredthUnlocked(state: PlayerState): boolean {
-  return (state.case?.lockedGroups.length ?? 0) >= 2;
+  return (state.case?.lockedGroups.length ?? 0) >= FINALE_MIN_GROUPS;
 }
 
 export function inspectCost(): number {

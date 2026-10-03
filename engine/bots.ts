@@ -8,7 +8,12 @@ import { mulberry32 } from '../utils/rng';
 import { buildCase, caseBible, caseRoomContent, CASE_ROOM_IDS } from '../case/buildCase';
 import type { CaseEvidence, CaseGraph } from '../case/types';
 import { Action } from './types';
-import { isCombineAvailable, isInteractionAvailable, step } from './step';
+import {
+  isCombineAvailable,
+  isInteractionAvailable,
+  roomsWithAvailableEvidence,
+  step,
+} from './step';
 
 export type Bot = (state: PlayerState, actions: Action[], random: () => number) => Action | null;
 
@@ -74,18 +79,6 @@ function supportActions(state: PlayerState, random: () => number): Action[] {
   return actions;
 }
 
-function caseEvidenceAvailable(state: PlayerState, graph: CaseGraph, evidence: CaseEvidence): boolean {
-  const room = state.visitedRooms[evidence.roomId] || caseRoomContent(graph, evidence.roomId);
-  const candidateState: PlayerState = {
-    ...state,
-    currentRoomId: evidence.roomId,
-    visitedRooms: state.visitedRooms[evidence.roomId]
-      ? state.visitedRooms
-      : { ...state.visitedRooms, [evidence.roomId]: room },
-  };
-  return isInteractionAvailable(candidateState, evidence.id);
-}
-
 function neededCaseCards(state: PlayerState, graph: CaseGraph): Set<string> {
   if (!state.case) return new Set();
   const needed = new Set(
@@ -126,19 +119,19 @@ function evidenceProvidesNeededCard(
   );
 }
 
-function availableEvidenceRooms(
+function evidenceRoomsForNeededCards(
   state: PlayerState,
   graph: CaseGraph,
-  needed?: Set<string>
+  needed: Set<string>
 ): string[] {
-  return [
-    ...new Set(
-      graph.evidence
-        .filter((evidence) => caseEvidenceAvailable(state, graph, evidence))
-        .filter((evidence) => !needed || evidenceProvidesNeededCard(state, evidence, needed))
-        .map((evidence) => evidence.roomId)
-    ),
-  ];
+  const availableRooms = roomsWithAvailableEvidence(state, { checkMorale: true });
+  if (needed.size === 0) return availableRooms;
+  return availableRooms.filter((roomId) =>
+    graph.evidence.some(
+      (evidence) =>
+        evidence.roomId === roomId && evidenceProvidesNeededCard(state, evidence, needed)
+    )
+  );
 }
 
 function nextStepTo(state: PlayerState, targets: string[]): Action | null {
@@ -304,7 +297,7 @@ export const caseBot: Bot = (state, _actions, random) => {
   if (skill) return { type: 'spendPoint', skill };
 
   const lockedCount = state.case.lockedGroups.length;
-  const evidenceRooms = availableEvidenceRooms(state, graph, needed);
+  const evidenceRooms = evidenceRoomsForNeededCards(state, graph, needed);
   if (state.currentRoomId === '100-1' && hasCloseCondition(state)) {
     return isInteractionAvailable(state, '100-1-finale')
       ? { type: 'interact', interactionId: '100-1-finale' }
@@ -428,7 +421,7 @@ export const guessBot: Bot = (state, actions, random) => {
   if (hasCloseCondition(state) && state.currentRoomId !== '100-1') {
     return nextStepTo(state, ['100-1']) || fallbackMove(state, random);
   }
-  const evidenceRooms = availableEvidenceRooms(state, graph);
+  const evidenceRooms = roomsWithAvailableEvidence(state, { checkMorale: true });
   if (evidenceRooms.length) return nextStepTo(state, evidenceRooms) || fallbackMove(state, random);
   if (lockedCount >= 2) {
     if (state.currentRoomId === '100-1' && state.minutesPastEight < 180) {

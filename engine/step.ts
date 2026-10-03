@@ -74,6 +74,41 @@ function caseEvidenceFor(state: PlayerState, interactionId: string): CaseEvidenc
   return buildCase(state.runSeed).evidence.find((evidence) => evidence.id === interactionId);
 }
 
+export function caseEvidenceAvailable(
+  state: PlayerState,
+  evidence: CaseEvidence,
+  options: { checkMorale?: boolean } = {}
+): boolean {
+  if (
+    state.runStatus !== 'playing' ||
+    !state.case ||
+    state.case.takenEvidence.includes(evidence.id)
+  ) {
+    return false;
+  }
+  if (options.checkMorale && evidence.kind === 'check' && state.morale <= 1) return false;
+  if (evidence.kind === 'look') return true;
+  const key = interactionKey(evidence.roomId, evidence.id);
+  if (evidence.checkKind === 'red') return !state.attemptedRedChecks.includes(key);
+  const retryMark = state.case.retryMarks[evidence.id];
+  return retryMark === undefined || state.case.cards.length > retryMark;
+}
+
+export function roomsWithAvailableEvidence(
+  state: PlayerState,
+  options: { checkMorale?: boolean } = {}
+): string[] {
+  if (state.runStatus !== 'playing' || !state.case) return [];
+  const graph = buildCase(state.runSeed);
+  return [
+    ...new Set(
+      graph.evidence
+        .filter((evidence) => caseEvidenceAvailable(state, evidence, options))
+        .map((evidence) => evidence.roomId)
+    ),
+  ];
+}
+
 export function isInteractionAvailable(state: PlayerState, interactionId: string): boolean {
   if (state.runStatus !== 'playing' || !state.currentRoomId) return false;
   const roomId = state.currentRoomId;
@@ -91,14 +126,7 @@ export function isInteractionAvailable(state: PlayerState, interactionId: string
   }
 
   const evidence = caseEvidenceFor(state, interactionId);
-  if (evidence) {
-    if (!state.case || state.case.takenEvidence.includes(interactionId)) return false;
-    if (evidence.kind === 'look') return true;
-    const key = interactionKey(roomId, interactionId);
-    if (evidence.checkKind === 'red') return !state.attemptedRedChecks.includes(key);
-    const retryMark = state.case.retryMarks[interactionId];
-    return retryMark === undefined || state.case.cards.length > retryMark;
-  }
+  if (evidence) return caseEvidenceAvailable(state, evidence, { checkMorale: true });
 
   const key = interactionKey(roomId, interactionId);
   if (state.resolvedChecks[key] === true) return false;
