@@ -30,6 +30,7 @@ export interface FlatsAtlas {
   texture: THREE.CanvasTexture;
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   refresh(input: FlatsAtlasInput): boolean;
+  stats(): { drawMs: number; pendingTiles: number };
   dispose(): void;
 }
 
@@ -142,7 +143,7 @@ function drawFurnitureItem(
   ctx.translate(x, y);
   ctx.scale(size, size);
   ctx.strokeStyle = sketch ? CHARCOAL.line : PALETTE.ink;
-  ctx.fillStyle = sketch ? rgba(CHARCOAL.line, 0.08) : rgba(PALETTE.wood, 0.3);
+  ctx.fillStyle = sketch ? rgba(CHARCOAL.line, 0.08) : rgba(PALETTE.wood, 0.46);
   ctx.lineWidth = sketch ? 0.025 : 0.03;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -430,16 +431,9 @@ function drawTile(
 ) {
   const cell = CELL_BY_ID[cellId];
   const scene = cellScene(cellId);
-  const row = 8 - cell.floor;
-  const column = cell.col - 1;
-  const x = column * TILE_SIZE;
-  const y = row * TILE_SIZE;
-  const scale = TILE_SIZE / TILE_DRAW_SIZE;
   const sketch = style === 'sketch';
   const rand = random(`${cellId}:${scene.seed}:drawing`);
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(scale, scale);
   ctx.clearRect(0, 0, TILE_DRAW_SIZE, TILE_DRAW_SIZE);
 
   if (style === 'room' || style === 'void') {
@@ -484,7 +478,7 @@ function drawTile(
       ctx.font = `bold 104px ${TYPE.mono}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillText(chapterNumeral(cell.chapter), 17, 12);
+      ctx.fillText(chapterNumeral(cell.chapter), 28, 34);
     }
     ctx.strokeStyle = rgba(CHARCOAL.line, 0.55);
     ctx.lineWidth = 2.5;
@@ -492,7 +486,13 @@ function drawTile(
   } else {
     ctx.fillStyle = scene.wall;
     ctx.fillRect(0, 0, TILE_DRAW_SIZE, TILE_DRAW_SIZE);
-    drawWallpaper(ctx, washFor(cell.apartmentId), cell.apartmentId, rand, false);
+    const wash = washFor(cell.apartmentId);
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = wash;
+    ctx.fillRect(0, 0, TILE_DRAW_SIZE, 422);
+    ctx.restore();
+    drawWallpaper(ctx, wash, cell.apartmentId, rand, false);
     ctx.fillStyle = scene.floor;
     ctx.globalAlpha = 0.54;
     ctx.fillRect(0, 422, TILE_DRAW_SIZE, 90);
@@ -524,12 +524,12 @@ function drawTile(
     });
     if (cell.chapter) {
       ctx.save();
-      ctx.globalAlpha = 0.62;
+      ctx.globalAlpha = 0.72;
       ctx.fillStyle = PALETTE.ink;
       ctx.font = `bold 48px ${TYPE.mono}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillText(chapterNumeral(cell.chapter), 15, 12);
+      ctx.fillText(chapterNumeral(cell.chapter), 25, 27);
       ctx.restore();
     }
     ctx.strokeStyle = rgba(PALETTE.ink, 0.48);
@@ -610,20 +610,135 @@ export function createFlatsAtlas(initial: FlatsAtlasInput): FlatsAtlas {
   mesh.renderOrder = -2;
 
   const rendered = new Map<string, string>();
+  const tileCache = new Map<string, HTMLCanvasElement>();
   const layouts = furnitureLayouts();
-  function refresh(input: FlatsAtlasInput): boolean {
-    let changed = false;
-    for (const cellId of SECTION_CELL_IDS) {
-      const tier = detailTier(cellId, input.focusCellId, input.visited, input.view);
-      const style = tileStyle(tier, input.visited.has(cellId), input.builtRooms.has(cellId));
-      const lit = input.hour >= 22 && input.lamps.has(cellId);
-      const key = `${style}:${lit}:${input.hour}`;
-      if (rendered.get(cellId) === key) continue;
-      drawTile(ctx, cellId, style, lit, input.hour, layouts);
-      rendered.set(cellId, key);
-      changed = true;
+  let latestInput = initial;
+  let pendingTiles: string[] = [];
+  let drawMs = 0;
+  let generation = 0;
+  let disposed = false;
+  const idleScheduler = window as unknown as {
+    requestIdleCallback?: (
+      callback: (deadline: { timeRemaining(): number; didTimeout: boolean }) => void,
+      options?: { timeout: number }
+    ) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+  let idleHandle: number | ReturnType<typeof setTimeout> | null = null;
+  let idleHandleIsTimeout = false;
+
+  function tileKey(cellId: string, input: FlatsAtlasInput): string {
+    const tier = detailTier(cellId, input.focusCellId, input.visited, input.view);
+    const style = tileStyle(tier, input.visited.has(cellId), input.builtRooms.has(cellId));
+    const lit = input.hour >= 22 && input.lamps.has(cellId);
+    return `${cellId}:${tier}:${style}:${input.hour}:${lit ? 1 : 0}`;
+  }
+
+  function visibleCellIds(input: FlatsAtlasInput): Set<string> {
+    if (input.view === 'building') return new Set(SECTION_CELL_IDS);
+    const focus = CELL_BY_ID[input.focusCellId];
+    if (!focus) return new Set();
+    const centerFloor = input.view === 'block' ? Math.max(1, Math.min(6, focus.floor)) : focus.floor;
+    const centerCol = input.view === 'block' ? Math.max(3, Math.min(8, focus.col)) : focus.col;
+    const extent = input.view === 'block' ? 2 : 1;
+    return new Set(
+      SECTION_CELL_IDS.filter((cellId) => {
+        const cell = CELL_BY_ID[cellId];
+        return (
+          Math.abs(cell.floor - centerFloor) <= extent &&
+          Math.abs(cell.col - centerCol) <= extent
+        );
+      })
+    );
+  }
+
+  function renderCell(cellId: string, input: FlatsAtlasInput): boolean {
+    const cell = CELL_BY_ID[cellId];
+    const tier = detailTier(cellId, input.focusCellId, input.visited, input.view);
+    const style = tileStyle(tier, input.visited.has(cellId), input.builtRooms.has(cellId));
+    const lit = input.hour >= 22 && input.lamps.has(cellId);
+    const key = `${cellId}:${tier}:${style}:${input.hour}:${lit ? 1 : 0}`;
+    if (rendered.get(cellId) === key) return false;
+
+    let tileCanvas = tileCache.get(key);
+    if (tileCanvas) {
+      tileCache.delete(key);
+      tileCache.set(key, tileCanvas);
+    } else {
+      tileCanvas = document.createElement('canvas');
+      tileCanvas.width = TILE_DRAW_SIZE;
+      tileCanvas.height = TILE_DRAW_SIZE;
+      const tileContext = tileCanvas.getContext('2d');
+      if (!tileContext) return false;
+      const started = performance.now();
+      drawTile(tileContext, cellId, style, lit, input.hour, layouts);
+      drawMs += performance.now() - started;
+      tileCache.set(key, tileCanvas);
+      while (tileCache.size > 120) {
+        const oldest = tileCache.keys().next().value;
+        if (oldest === undefined) break;
+        tileCache.delete(oldest);
+      }
     }
+
+    const row = 8 - cell.floor;
+    const column = cell.col - 1;
+    ctx.clearRect(column * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    ctx.drawImage(tileCanvas, column * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    rendered.set(cellId, key);
+    return true;
+  }
+
+  function cancelScheduledWork() {
+    if (idleHandle === null) return;
+    if (idleHandleIsTimeout) clearTimeout(idleHandle as ReturnType<typeof setTimeout>);
+    else idleScheduler.cancelIdleCallback?.(idleHandle as number);
+    idleHandle = null;
+  }
+
+  function scheduleIdleWork(expectedGeneration: number) {
+    if (disposed || idleHandle !== null || pendingTiles.length === 0) return;
+    const run = (deadline?: { timeRemaining(): number; didTimeout: boolean }) => {
+      idleHandle = null;
+      if (disposed || expectedGeneration !== generation) return;
+      let changed = false;
+      const started = performance.now();
+      let count = 0;
+      while (
+        pendingTiles.length > 0 &&
+        count < 10 &&
+        (count === 0 || deadline?.didTimeout || (deadline?.timeRemaining() ?? 0) > 1) &&
+        performance.now() - started < 8
+      ) {
+        changed = renderCell(pendingTiles.shift()!, latestInput) || changed;
+        count += 1;
+      }
+      if (changed) texture.needsUpdate = true;
+      if (pendingTiles.length > 0) scheduleIdleWork(expectedGeneration);
+    };
+    if (idleScheduler.requestIdleCallback) {
+      idleHandleIsTimeout = false;
+      idleHandle = idleScheduler.requestIdleCallback(run, { timeout: 80 });
+    } else {
+      idleHandleIsTimeout = true;
+      idleHandle = setTimeout(() => run(), 0);
+    }
+  }
+
+  function refresh(input: FlatsAtlasInput): boolean {
+    latestInput = input;
+    generation += 1;
+    cancelScheduledWork();
+    let changed = false;
+    const visible = visibleCellIds(input);
+    for (const cellId of SECTION_CELL_IDS) {
+      if (visible.has(cellId)) changed = renderCell(cellId, input) || changed;
+    }
+    pendingTiles = SECTION_CELL_IDS.filter(
+      (cellId) => !visible.has(cellId) && rendered.get(cellId) !== tileKey(cellId, input)
+    );
     if (changed) texture.needsUpdate = true;
+    scheduleIdleWork(generation);
     return changed;
   }
 
@@ -632,11 +747,19 @@ export function createFlatsAtlas(initial: FlatsAtlasInput): FlatsAtlas {
     texture,
     mesh,
     refresh,
+    stats() {
+      return { drawMs, pendingTiles: pendingTiles.length };
+    },
     dispose() {
+      disposed = true;
+      generation += 1;
+      cancelScheduledWork();
       mesh.geometry.dispose();
       material.dispose();
       texture.dispose();
       rendered.clear();
+      tileCache.clear();
+      pendingTiles = [];
     },
   };
 }

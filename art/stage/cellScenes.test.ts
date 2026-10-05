@@ -8,7 +8,6 @@ import {
   ANCHORS,
   CELL_ROOM,
   PLAYER_SPOT,
-  PLAYER_SPOT_ANCHORS,
   cellScene,
 } from './cellScenes';
 
@@ -55,8 +54,7 @@ for (const kind of kinds) {
   assert.ok(x >= -CELL_ROOM.W / 2 && x <= CELL_ROOM.W / 2, `${kind} player x is outside the room`);
   assert.ok(y >= 0 && y <= CELL_ROOM.H, `${kind} player y is outside the room`);
   assert.ok(z >= -CELL_ROOM.D / 2 && z <= CELL_ROOM.D / 2, `${kind} player z is outside the room`);
-  for (const anchorId of PLAYER_SPOT_ANCHORS[kind] ?? []) {
-    const anchor = ANCHORS[anchorId];
+  for (const [anchorId, anchor] of Object.entries(ANCHORS)) {
     const distance = Math.hypot(x - anchor[0], y - anchor[1], z - anchor[2]);
     assert.ok(distance >= 0.45, `${kind} player spot overlaps ${anchorId} at ${distance}`);
   }

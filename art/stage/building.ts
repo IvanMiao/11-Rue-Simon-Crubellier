@@ -50,8 +50,16 @@ export interface BuildingStats {
   renderCalls: number;
   drawCalls: number;
   firstReadyMs: number | null;
+  firstInkRenderMs: number | null;
+  inkRenderMs: number;
+  rendererInitMs: number;
+  mountSetupMs: number;
   roomBuildMs: number;
   lastRoomBuildMs: number;
+  sketchMaterialSwapMs: number;
+  shadowUpdateMs: number;
+  atlasDrawMs: number;
+  atlasPendingTiles: number;
   roomsBuilt: number;
   idle: boolean;
 }
@@ -304,6 +312,7 @@ export function mountBuilding(
   callbacks: BuildingCallbacks
 ): BuildingHandle {
   const startedAt = performance.now();
+  const rendererStartedAt = performance.now();
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(PALETTE.paper);
   const root = new THREE.Group();
@@ -316,10 +325,12 @@ export function mountBuilding(
     alpha: false,
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const rendererInitMs = performance.now() - rendererStartedAt;
+  const renderPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(renderPixelRatio);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.autoUpdate = false;
-  renderer.shadowMap.needsUpdate = true;
+  renderer.shadowMap.needsUpdate = false;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NoToneMapping;
@@ -328,6 +339,13 @@ export function mountBuilding(
   renderer.domElement.setAttribute('aria-label', 'Valène 的整栋楼剖面');
   renderer.domElement.style.touchAction = 'none';
   host.replaceChildren(renderer.domElement);
+  let shadowUpdateMs = 0;
+  const renderShadowMap = renderer.shadowMap.render.bind(renderer.shadowMap);
+  renderer.shadowMap.render = (lights, shadowScene, shadowCamera) => {
+    const started = performance.now();
+    renderShadowMap(lights, shadowScene, shadowCamera);
+    shadowUpdateMs += performance.now() - started;
+  };
 
   const ink = new InkRenderer(renderer, scene, camera);
   const section = buildBuildingSection();
@@ -347,8 +365,8 @@ export function mountBuilding(
   const sun = new THREE.DirectionalLight(LIGHT_2000.sunColor, LIGHT_2000.sunIntensity);
   sun.castShadow = true;
   sun.shadow.autoUpdate = false;
-  sun.shadow.needsUpdate = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.needsUpdate = false;
+  sun.shadow.mapSize.set(512, 512);
   sun.shadow.camera.left = -14;
   sun.shadow.camera.right = 14;
   sun.shadow.camera.top = 14;
@@ -366,7 +384,7 @@ export function mountBuilding(
   const rooms = new Map<string, RoomEntry>();
   let desiredRooms = new Set<string>();
   let roomQueue: string[] = [];
-  const knight = knightPiece(0.62);
+  const knight = knightPiece(0.82);
   knight.name = 'player-knight';
   root.add(knight);
   const hotspotGroup = new THREE.Group();
@@ -383,15 +401,32 @@ export function mountBuilding(
   overlayScene.add(hoverGroup);
 
   let currentInput: BuildingInput = initial;
+  let focusRoomRequired =
+    detailTier(initial.focus, initial.focus, new Set(initial.visited), initial.view) === 'room';
   let disposed = false;
   let currentPose = toPose(frameFor(initial.view, initial.focus, 1));
   let cameraTween: CameraTween | null = null;
   let cameraFlight: CameraFlight | null = null;
   let firstReadyMs: number | null = null;
+  let firstInkRenderMs: number | null = null;
+  let inkRenderMs = 0;
+  let mountSetupMs = 0;
   let roomBuildMs = 0;
   let lastRoomBuildMs = 0;
+  let sketchMaterialSwapMs = 0;
   let roomsBuilt = 0;
+  let atlasRefreshPending = false;
+  let shadowDirty = true;
   let frame = 0;
+  let flightTimer: number | null = null;
+  let flightRenderMode = false;
+  function setFlightRenderMode(enabled: boolean) {
+    if (flightRenderMode === enabled) return;
+    flightRenderMode = enabled;
+    renderer.setPixelRatio(enabled ? Math.min(renderPixelRatio, 0.5) : renderPixelRatio);
+    renderer.setSize(size.width, size.height, false);
+    ink.setSize(size.width, size.height);
+  }
   let hoverCell: string | null = null;
   let hoveredHotspot: THREE.Sprite | null = null;
   const lampLights = new Map<string, THREE.PointLight>();
@@ -406,6 +441,11 @@ export function mountBuilding(
   const pickPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -FRONT_Z);
   const pickPoint = new THREE.Vector3();
   const size = { width: 1, height: 1 };
+  function updateSketchMode(group: THREE.Group, on: boolean) {
+    const started = performance.now();
+    applySketchMode(group, on);
+    sketchMaterialSwapMs += performance.now() - started;
+  }
   const initialFrame = frameFor(initial.view, initial.focus, 1);
   currentPose = toPose(initialFrame, initialFrame.viewHeight * 2.2);
   applyCameraPose(currentPose);
@@ -413,7 +453,7 @@ export function mountBuilding(
     from: clonePose(currentPose),
     to: toPose(initialFrame),
     started: performance.now(),
-    duration: 700,
+    duration: 600,
   };
   setKnightCell(initial.current);
 
@@ -447,7 +487,7 @@ export function mountBuilding(
   function setKnightCell(cellId: string) {
     const [x, y, z] = cellOrigin3d(cellId);
     const [spotX, spotY, spotZ] = PLAYER_SPOT[cellScene(cellId).kind];
-    knight.position.set(x + spotX, y + spotY + 0.03, z + spotZ);
+    knight.position.set(x + spotX, y + spotY, z + spotZ);
   }
 
   function updateLampLights(input: BuildingInput) {
@@ -520,8 +560,7 @@ export function mountBuilding(
     sun.shadow.camera.bottom = -shadowSpan / 2;
     sun.shadow.camera.updateProjectionMatrix();
     if (shadowChanged) {
-      renderer.shadowMap.needsUpdate = true;
-      sun.shadow.needsUpdate = true;
+      shadowDirty = true;
     }
   }
 
@@ -546,10 +585,9 @@ export function mountBuilding(
     roomsRoot.remove(entry.group);
     disposeGroupContents(entry.group);
     rooms.delete(cellId);
-    renderer.shadowMap.needsUpdate = true;
-    sun.shadow.needsUpdate = true;
+    shadowDirty = true;
     updateLampLights(currentInput);
-    refreshAtlas();
+    if (!atlasRefreshPending) refreshAtlas();
   }
 
   function updateRoomDemand(input: BuildingInput) {
@@ -559,7 +597,7 @@ export function mountBuilding(
     );
     for (const [id, entry] of rooms) {
       entry.group.visible = desiredRooms.has(id);
-      applySketchMode(entry.group, id !== input.current && !visitedSet.has(id));
+      updateSketchMode(entry.group, id !== input.current && !visitedSet.has(id));
     }
     for (const id of desiredRooms) {
       const entry = rooms.get(id);
@@ -568,12 +606,16 @@ export function mountBuilding(
         rooms.set(id, entry);
       }
     }
-    roomQueue = [...desiredRooms].filter((id) => !rooms.has(id));
+    const queuedRooms = () =>
+      [...desiredRooms]
+        .filter((id) => !rooms.has(id))
+        .sort((a, b) => Number(b === input.focus) - Number(a === input.focus));
+    roomQueue = queuedRooms();
     while (rooms.size + roomQueue.length > MAX_ROOMS) {
       const leastRecent = [...rooms.keys()].find((id) => !desiredRooms.has(id));
       if (!leastRecent) break;
       evictRoom(leastRecent);
-      roomQueue = [...desiredRooms].filter((id) => !rooms.has(id));
+      roomQueue = queuedRooms();
     }
   }
 
@@ -585,15 +627,19 @@ export function mountBuilding(
     const [x, y, z] = cellOrigin3d(cellId);
     group.position.set(x, y, z);
     group.visible = desiredRooms.has(cellId);
-    applySketchMode(group, cellId !== currentInput.current && !currentInput.visited.includes(cellId));
+    updateSketchMode(group, cellId !== currentInput.current && !currentInput.visited.includes(cellId));
     roomsRoot.add(group);
     rooms.set(cellId, { group });
     lastRoomBuildMs = performance.now() - started;
     roomBuildMs += lastRoomBuildMs;
     roomsBuilt += 1;
-    renderer.shadowMap.needsUpdate = true;
-    sun.shadow.needsUpdate = true;
-    refreshAtlas();
+    shadowDirty = true;
+    if (
+      !atlasRefreshPending &&
+      (cellId === currentInput.focus || roomQueue.length === 0)
+    ) {
+      refreshAtlas();
+    }
     updateLighting(currentInput);
   }
 
@@ -613,13 +659,14 @@ export function mountBuilding(
     const path = flightPath(move.from, move.to, move.kind);
     if (path.length < 2) return;
     const frames = path.map((id) => frameForCell(input.view, id));
-    const duration = move.kind === 'knight' ? 900 : 720;
+    const duration = move.kind === 'knight' ? 1200 : 720;
     const flightHeight = Math.max(
       currentPose.viewHeight,
       frames[frames.length - 1].viewHeight * 1.75,
       input.view === 'room' ? frames[0].viewHeight * 2.05 : frames[0].viewHeight
     );
     setKnightCell(move.from);
+    setFlightRenderMode(true);
     cameraFlight = {
       path,
       frames,
@@ -628,6 +675,13 @@ export function mountBuilding(
       flightHeight,
     };
     cameraTween = null;
+    if (frame) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+    }
+    if (flightTimer !== null) window.clearTimeout(flightTimer);
+    flightTimer = null;
+    draw();
   }
 
   function interpolatePose(from: CameraPose, to: CameraPose, t: number): CameraPose {
@@ -663,12 +717,16 @@ export function mountBuilding(
       const hop = Math.sin(Math.PI * segmentT) * 0.52;
       knight.position.set(
         x1 + sx1 + (x2 + sx2 - x1 - sx1) * eased,
-        y1 + sy1 + (y2 + sy2 - y1 - sy1) * eased + hop + 0.03,
+        y1 + sy1 + (y2 + sy2 - y1 - sy1) * eased + hop,
         z1 + sz1 + (z2 + sz2 - z1 - sz1) * eased
       );
 
       if (progress >= 1) {
         cameraFlight = null;
+        if (atlasRefreshPending) {
+          refreshAtlas();
+          atlasRefreshPending = false;
+        }
         setKnightCell(flight.path[flight.path.length - 1]);
         addCameraTween(frameForCell(currentInput.view, currentInput.focus), 700);
       }
@@ -922,9 +980,11 @@ export function mountBuilding(
   renderer.domElement.addEventListener('click', onClick);
   renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
 
-  function applyInput(input: BuildingInput, animate: boolean) {
+  function applyInput(input: BuildingInput, animate: boolean, deferAtlas = false) {
     const previous = currentInput;
     currentInput = input;
+    focusRoomRequired =
+      detailTier(input.focus, input.focus, new Set(input.visited), input.view) === 'room';
     requestedView = input.view;
     ink.setMode(input.mode as InkMode);
     const visitedChanged = JSON.stringify(previous.visited) !== JSON.stringify(input.visited);
@@ -934,8 +994,16 @@ export function mountBuilding(
       previous.current !== input.current ||
       previous.view !== input.view ||
       visitedChanged;
+    if (
+      deferAtlas &&
+      (demandChanged || lampsChanged || previous.hour !== input.hour)
+    ) {
+      atlasRefreshPending = true;
+    }
     if (demandChanged) updateRoomDemand(input);
-    if (demandChanged || lampsChanged || previous.hour !== input.hour) refreshAtlas();
+    if (demandChanged || lampsChanged || previous.hour !== input.hour) {
+      if (!deferAtlas) refreshAtlas();
+    }
     if (demandChanged || lampsChanged || previous.hour !== input.hour) {
       updateLighting(
         input,
@@ -961,9 +1029,12 @@ export function mountBuilding(
 
   function draw() {
     if (disposed) return;
+    flightTimer = null;
     const now = performance.now();
     if (roomQueue.length > 0) buildOneRoom();
+    const movementFrame = cameraFlight !== null || cameraTween !== null;
     updateCamera(now);
+    if (!cameraFlight && !cameraTween && flightRenderMode) setFlightRenderMode(false);
     camera.updateMatrixWorld();
     layoutHotspots();
     layoutCellSprites(moveGroup, { width: 72, height: 25 });
@@ -971,16 +1042,76 @@ export function mountBuilding(
     if (hoveredHotspot) renderer.domElement.style.cursor = 'pointer';
 
     renderer.info.reset();
-    ink.render(currentPose.viewHeight);
-    const autoClear = renderer.autoClear;
-    renderer.autoClear = false;
-    renderer.clearDepth();
-    renderer.render(overlayScene, camera);
-    renderer.autoClear = autoClear;
+    const focusRoomReady = !focusRoomRequired || rooms.has(currentInput.focus);
+    const cameraMoving = cameraTween !== null || cameraFlight !== null;
+    const visibleReady = focusRoomReady;
+    const loading =
+      !visibleReady ||
+      (firstReadyMs !== null && (roomQueue.length > 0 || cameraMoving));
+    const flightActive = cameraFlight !== null;
+    section.group.visible = !flightActive;
+    atlas.mesh.visible = true;
+    roomsRoot.visible = !cameraFlight && (focusRoomReady || firstReadyMs !== null);
+    renderer.shadowMap.enabled = !flightActive;
+    if (!loading && shadowDirty && firstInkRenderMs !== null) {
+      renderer.shadowMap.needsUpdate = true;
+      sun.shadow.needsUpdate = true;
+      shadowDirty = false;
+    }
+    let rendered = false;
+    if (loading) {
+      if (cameraMoving) {
+        renderer.render(scene, camera);
+        rendered = true;
+      }
+    } else if (firstReadyMs === null) {
+      const sectionVisible = section.group.visible;
+      const atlasVisible = atlas.mesh.visible;
+      const roomsVisible = roomsRoot.visible;
+      const knightVisible = knight.visible;
+      section.group.visible = true;
+      atlas.mesh.visible = false;
+      roomsRoot.visible = false;
+      knight.visible = false;
+      renderer.render(scene, camera);
+      section.group.visible = sectionVisible;
+      atlas.mesh.visible = atlasVisible;
+      roomsRoot.visible = roomsVisible;
+      knight.visible = knightVisible;
+      if (firstReadyMs === null) firstReadyMs = performance.now() - startedAt;
+      rendered = true;
+    } else {
+      const inkStarted = performance.now();
+      ink.render(currentPose.viewHeight);
+      inkRenderMs += performance.now() - inkStarted;
+      if (firstInkRenderMs === null) firstInkRenderMs = performance.now() - inkStarted;
+      rendered = true;
+    }
+    if (rendered && !movementFrame) {
+      const autoClear = renderer.autoClear;
+      renderer.autoClear = false;
+      renderer.clearDepth();
+      renderer.render(overlayScene, camera);
+      renderer.autoClear = autoClear;
+    }
+    if (rendered && cameraFlight) {
+      const progress = Math.min(1, (now - cameraFlight.started) / cameraFlight.duration);
+      renderer.domElement.dispatchEvent(
+        new CustomEvent('buildingflightframe', { detail: { progress } })
+      );
+    }
 
-    const idle = roomQueue.length === 0 && !cameraTween && !cameraFlight;
-    if (idle && firstReadyMs === null) firstReadyMs = performance.now() - startedAt;
-    frame = requestAnimationFrame(draw);
+    const idle =
+      roomQueue.length === 0 &&
+      atlas.stats().pendingTiles === 0 &&
+      !shadowDirty &&
+      !cameraTween &&
+      !cameraFlight;
+    if (cameraFlight || cameraTween) {
+      flightTimer = window.setTimeout(draw, 16);
+    } else {
+      frame = requestAnimationFrame(draw);
+    }
   }
 
   const handle: BuildingHandle = {
@@ -998,7 +1129,7 @@ export function mountBuilding(
       requestedView = input.view;
       if (movementStarted) {
         lastMoveObject = input.lastMove;
-        applyInput(input, false);
+        applyInput(input, false, true);
         startFlight(input);
       } else {
         applyInput(input, false);
@@ -1015,12 +1146,13 @@ export function mountBuilding(
       setFrustum(currentPose.viewHeight);
       camera.updateMatrixWorld();
       const framePose = frameForCell(currentInput.view, currentInput.focus);
-      if (!cameraFlight) addCameraTween(framePose, 700);
+      if (!cameraFlight) addCameraTween(framePose, 600);
     },
     dispose() {
       if (disposed) return;
       disposed = true;
       cancelAnimationFrame(frame);
+      if (flightTimer !== null) window.clearTimeout(flightTimer);
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
@@ -1033,6 +1165,8 @@ export function mountBuilding(
       clearOverlay(moveGroup);
       clearOverlay(changedGroup);
       clearOverlay(hoverGroup);
+      atlas.dispose();
+      root.remove(atlas.mesh);
       disposeGroupContents(root);
       ink.dispose();
       renderer.dispose();
@@ -1040,13 +1174,27 @@ export function mountBuilding(
       host.replaceChildren();
     },
     stats() {
-      const idle = roomQueue.length === 0 && !cameraTween && !cameraFlight;
+      const atlasStats = atlas.stats();
+      const idle =
+        roomQueue.length === 0 &&
+        atlasStats.pendingTiles === 0 &&
+        !shadowDirty &&
+        !cameraTween &&
+        !cameraFlight;
       return {
         renderCalls: renderer.info.render.calls,
         drawCalls: renderer.info.render.calls,
         firstReadyMs,
+        firstInkRenderMs,
+        inkRenderMs,
+        rendererInitMs,
+        mountSetupMs,
         roomBuildMs,
         lastRoomBuildMs,
+        sketchMaterialSwapMs,
+        shadowUpdateMs,
+        atlasDrawMs: atlasStats.drawMs,
+        atlasPendingTiles: atlasStats.pendingTiles,
         roomsBuilt,
         idle,
       };
@@ -1054,6 +1202,7 @@ export function mountBuilding(
   };
 
   handle.resize(host.clientWidth || 900, host.clientHeight || 620);
+  mountSetupMs = performance.now() - startedAt;
   frame = requestAnimationFrame(draw);
   return handle;
 }

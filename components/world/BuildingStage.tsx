@@ -24,6 +24,7 @@ const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, fallbac
 
   useEffect(() => {
     let active = true;
+    let revealFrame = 0;
     import('../../art/stage/building')
       .then(({ mountBuilding }) => {
         if (!active || !hostRef.current) return;
@@ -33,13 +34,23 @@ const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, fallbac
           onHoverCell: (cellId) => callbacksRef.current.onHoverCell(cellId),
           onViewChange: (view) => callbacksRef.current.onViewChange(view),
         });
-        setReady(true);
+        const revealWhenRendered = () => {
+          if (!active) return;
+          const handle = handleRef.current;
+          if (handle && handle.stats().firstReadyMs !== null) {
+            setReady(true);
+            return;
+          }
+          revealFrame = requestAnimationFrame(revealWhenRendered);
+        };
+        revealWhenRendered();
       })
       .catch(() => {
         if (active) setFailed(true);
       });
     return () => {
       active = false;
+      cancelAnimationFrame(revealFrame);
       handleRef.current?.dispose();
       handleRef.current = null;
     };
