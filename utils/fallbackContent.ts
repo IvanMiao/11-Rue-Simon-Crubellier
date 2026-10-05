@@ -10,6 +10,7 @@ import {
   StoryBible,
 } from '../types';
 import { hashString, mulberry32, pickIndex } from './rng';
+import { CLINAMEN_CELL } from '../world/damier';
 
 const FALLBACK_THREADS = [
   {
@@ -107,7 +108,7 @@ export function sanitizeRoomContent(roomId: string, content: NarrativeResponse):
     };
   });
 
-  if (roomId === '100-1') {
+  if (roomId === CLINAMEN_CELL) {
     const finaleIndex = interactions.findIndex((interaction) => interaction.id === FINALE_INTERACTION.id);
     const canonicalFinale = { ...FINALE_INTERACTION };
     if (finaleIndex >= 0) interactions[finaleIndex] = canonicalFinale;
@@ -199,7 +200,7 @@ export function fallbackRoom(
     },
   ];
 
-  if (roomId === '100-1') {
+  if (roomId === CLINAMEN_CELL) {
     interactions.push(FINALE_INTERACTION);
   } else if (highTension) {
     interactions.push({

@@ -1,14 +1,15 @@
 import {
+  DIFFICULTY_DC,
   FINALE_MIN_GROUPS,
   SKILL_MAX,
   SKILL_ORDER,
-  TIME_COMBINE,
+  THOUGHT_SLOTS,
   TIME_INTERACTION,
   TIME_SUBMIT,
   WRONG_SUBMIT_MORALE,
 } from '../constants/skills';
-import { BUILDING_LAYOUT } from '../constants';
-import { CaseEvidence, CaseGraph, CaseState } from '../case/types';
+import { CASE_HOUR_PAGES, CASE_APARTMENT_PASSAGES, CASE_ITEMS } from '../case/caseData';
+import { CardSource, CaseEvidence, CaseGraph, CaseState } from '../case/types';
 import { buildCase, caseRoomContent, CASE_ROOM_IDS } from '../case/buildCase';
 import {
   appendJournal,
@@ -17,8 +18,11 @@ import {
   applyTime,
   beginRun,
   cacheRoom,
+  clockLabel,
+  combineTimeCost,
   collectItem,
   consumeInteraction,
+  hasInternalizedThought,
   hundredthUnlocked,
   internalizeThought,
   moveTimeCost,
@@ -29,11 +33,17 @@ import { describeMove, getReachableRooms } from '../utils/gridLogic';
 import { FINALE_INTERACTION } from '../utils/fallbackContent';
 import { interactionKey, performSkillCheck } from '../utils/skillCheck';
 import { Interaction, PlayerState, RunStatus } from '../types';
-import { Action, GameEvent } from './types';
+import { Action, GameEvent, LockReason } from './types';
+import { CELL_BY_ID, CHAPTER_ONE_CELL, CLINAMEN_CELL } from '../world/damier';
 
-const reject = (state: PlayerState, action: Action, reason: string) => ({
+const reject = (
+  state: PlayerState,
+  action: Action,
+  reason: string,
+  lock?: LockReason
+) => ({
   state,
-  events: [{ type: 'rejected', action: action.type, reason } as const],
+  events: [{ type: 'rejected', action: action.type, reason, ...(lock ? { lock } : {}) } as const],
 });
 
 const endingEvent = (before: PlayerState, after: PlayerState): GameEvent[] =>
@@ -48,25 +58,33 @@ function initialCaseState(graph: CaseGraph): CaseState {
   return {
     liar: graph.liar,
     handSkill: graph.handSkill,
+    notebook: false,
     cards: [],
+    cardSources: {},
     takenEvidence: [],
     usedRecipes: [],
     slots: Object.fromEntries(graph.slots.map((slot) => [slot.id, null])),
     lockedGroups: [],
     wrongSubmissions: 0,
     retryMarks: {},
+    pondered: {},
     notes: [],
   };
 }
 
-function addCards(caseState: CaseState, cardIds: string[]) {
+function addCards(caseState: CaseState, cardIds: string[], source: CardSource) {
   const known = new Set(caseState.cards);
+  const cardSources = { ...caseState.cardSources };
   const cards = cardIds.filter((cardId) => {
     if (known.has(cardId)) return false;
     known.add(cardId);
+    cardSources[cardId] = { ...source };
     return true;
   });
-  return { caseState: { ...caseState, cards: [...caseState.cards, ...cards] }, cards };
+  return {
+    caseState: { ...caseState, cards: [...caseState.cards, ...cards], cardSources },
+    cards,
+  };
 }
 
 function caseEvidenceFor(state: PlayerState, interactionId: string): CaseEvidence | undefined {
@@ -83,6 +101,16 @@ export function caseEvidenceAvailable(
     state.runStatus !== 'playing' ||
     !state.case ||
     state.case.takenEvidence.includes(evidence.id)
+  ) {
+    return false;
+  }
+  if (!state.case.notebook && !evidence.grantsNotebook) return false;
+  if (evidence.availableFrom !== undefined && state.minutesPastEight < evidence.availableFrom) {
+    return false;
+  }
+  if (
+    evidence.requiresItem &&
+    !state.inventory.some((item) => item.id === evidence.requiresItem)
   ) {
     return false;
   }
@@ -109,29 +137,152 @@ export function roomsWithAvailableEvidence(
   ];
 }
 
+function isCaseApartmentCell(cellId: string): boolean {
+  const cell = CELL_BY_ID[cellId];
+  return Boolean(cell && CASE_APARTMENT_PASSAGES[cell.apartmentId]);
+}
+
 export function isInteractionAvailable(state: PlayerState, interactionId: string): boolean {
   if (state.runStatus !== 'playing' || !state.currentRoomId) return false;
-  const roomId = state.currentRoomId;
+  return lineLockReason(state, state.currentRoomId, interactionId) === null;
+}
+
+function caseEvidenceLockReason(
+  state: PlayerState,
+  evidence: CaseEvidence
+): LockReason | null {
+  if (!state.case) return { kind: 'unavailable' };
+  if (state.case.takenEvidence.includes(evidence.id)) return { kind: 'done' };
+  if (state.runStatus !== 'playing') return { kind: 'unavailable' };
+  if (!state.case.notebook && !evidence.grantsNotebook) return { kind: 'needsNotebook' };
+  if (evidence.availableFrom !== undefined && state.minutesPastEight < evidence.availableFrom) {
+    return { kind: 'notBefore', minute: evidence.availableFrom };
+  }
+  if (
+    evidence.requiresItem &&
+    !state.inventory.some((item) => item.id === evidence.requiresItem)
+  ) {
+    const item = CASE_ITEMS.find((candidate) => candidate.id === evidence.requiresItem);
+    return {
+      kind: 'needsItem',
+      itemId: evidence.requiresItem,
+      itemName: item?.name || evidence.requiresItem,
+      itemCellId: item?.roomId || evidence.roomId,
+    };
+  }
+  if (evidence.kind === 'check' && state.morale <= 1) {
+    return { kind: 'lowMorale', morale: state.morale, need: 2 };
+  }
+  if (evidence.kind === 'check') {
+    const key = interactionKey(evidence.roomId, evidence.id);
+    if (evidence.checkKind === 'red' && state.attemptedRedChecks.includes(key)) {
+      return { kind: 'done' };
+    }
+    const retryMark = state.case.retryMarks[evidence.id];
+    if (retryMark !== undefined && state.case.cards.length <= retryMark) {
+      return { kind: 'needsNewCard' };
+    }
+  }
+  return null;
+}
+
+function interactionLockForRoom(
+  state: PlayerState,
+  roomId: string,
+  interaction: Interaction
+): LockReason | null {
+  const interactionId = interaction.id || interaction.label;
   const room = state.visitedRooms[roomId];
-  const interaction = room?.available_interactions?.find(
-    (candidate) => (candidate.id || candidate.label) === interactionId
-  );
-  if (!interaction || (room?.consumed_interaction_ids || []).includes(interactionId)) return false;
+  if (!room) return { kind: 'unavailable' };
+  if ((room.consumed_interaction_ids || []).includes(interactionId)) return { kind: 'done' };
+  const key = interactionKey(roomId, interactionId);
+  if (
+    state.resolvedChecks[key] === true ||
+    (interaction.kind === 'red' && state.attemptedRedChecks.includes(key))
+  ) {
+    return { kind: 'done' };
+  }
   const isCheck =
     interaction.type === 'check' || Boolean(interaction.skill && interaction.difficulty);
-  if (isCheck && state.morale <= 1) return false;
-
-  if (roomId === '100-1' && interactionId === FINALE_INTERACTION.id) {
-    return (state.case?.lockedGroups.length ?? 0) >= FINALE_MIN_GROUPS;
+  if (isCheck && state.morale <= 1) {
+    return { kind: 'lowMorale', morale: state.morale, need: 2 };
   }
+  return null;
+}
 
-  const evidence = caseEvidenceFor(state, interactionId);
-  if (evidence) return caseEvidenceAvailable(state, evidence, { checkMorale: true });
+export function lineLockReason(
+  state: PlayerState,
+  cellId: string,
+  lineId: string
+): LockReason | null {
+  if (cellId === CLINAMEN_CELL && lineId === FINALE_INTERACTION.id) {
+    if (state.runStatus === 'solved') return { kind: 'done' };
+    const have = state.case?.lockedGroups.length ?? 0;
+    return have >= FINALE_MIN_GROUPS
+      ? null
+      : { kind: 'needsGroups', have, need: FINALE_MIN_GROUPS };
+  }
+  const evidence = state.case
+    ? buildCase(state.runSeed).evidence.find((candidate) => candidate.id === lineId)
+    : undefined;
+  if (evidence) {
+    return evidence.roomId === cellId
+      ? caseEvidenceLockReason(state, evidence)
+      : { kind: 'unavailable' };
+  }
+  const room = state.visitedRooms[cellId];
+  const interaction = room?.available_interactions?.find(
+    (candidate) => (candidate.id || candidate.label) === lineId
+  );
+  if (!interaction || state.runStatus !== 'playing') return { kind: 'unavailable' };
+  return interactionLockForRoom(state, cellId, interaction);
+}
 
-  const key = interactionKey(roomId, interactionId);
-  if (state.resolvedChecks[key] === true) return false;
-  if (interaction.kind === 'red' && state.attemptedRedChecks.includes(key)) return false;
-  return true;
+export function interactionLockReason(
+  state: PlayerState,
+  interactionId: string
+): LockReason | null {
+  if (state.case) {
+    const evidence = buildCase(state.runSeed).evidence.find(
+      (candidate) => candidate.id === interactionId
+    );
+    if (evidence) return caseEvidenceLockReason(state, evidence);
+  }
+  if (interactionId === FINALE_INTERACTION.id) {
+    if (state.runStatus === 'solved') return { kind: 'done' };
+    const have = state.case?.lockedGroups.length ?? 0;
+    return have >= FINALE_MIN_GROUPS
+      ? null
+      : { kind: 'needsGroups', have, need: FINALE_MIN_GROUPS };
+  }
+  for (const [roomId, room] of Object.entries(state.visitedRooms)) {
+    const interaction = room.available_interactions?.find(
+      (candidate) => (candidate.id || candidate.label) === interactionId
+    );
+    if (interaction) return interactionLockForRoom(state, roomId, interaction);
+  }
+  return { kind: 'unavailable' };
+}
+
+export function lockReasonText(reason: LockReason): string {
+  switch (reason.kind) {
+    case 'done':
+      return '这一行已经记下了。';
+    case 'needsNotebook':
+      return '先拾起楼梯上的速写本。';
+    case 'needsItem':
+      return `锁着。需要${reason.itemName}。`;
+    case 'notBefore':
+      return `还没到时候。${clockLabel(reason.minute)} 以后再来。`;
+    case 'lowMorale':
+      return '意志太低，无法继续检定。';
+    case 'needsNewCard':
+      return '换个角度：先拿到一张新卡再试。';
+    case 'needsGroups':
+      return `案卷至少要有 ${reason.need} 组对上（现在 ${reason.have} 组）。`;
+    case 'unavailable':
+      return '找不到这项互动。';
+  }
 }
 
 export function isCombineAvailable(state: PlayerState, a: string, b: string): boolean {
@@ -152,7 +303,7 @@ export function isCombineAvailable(state: PlayerState, a: string, b: string): bo
   return !recipe || !state.case.usedRecipes.includes(recipe.id);
 }
 
-export function step(state: PlayerState, action: Action): { state: PlayerState; events: GameEvent[] } {
+function stepAction(state: PlayerState, action: Action): { state: PlayerState; events: GameEvent[] } {
   try {
     switch (action.type) {
       case 'startRun': {
@@ -169,16 +320,16 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         const graph = buildCase(action.seed);
         let next: PlayerState = {
           ...beginRun(action.character, action.seed, action.bible),
-          version: 5,
+          version: 7,
           case: initialCaseState(graph),
         };
-        next = cacheRoom(next, '0-5', caseRoomContent(graph, '0-5'));
+        next = cacheRoom(next, CHAPTER_ONE_CELL, caseRoomContent(graph, CHAPTER_ONE_CELL));
         return { state: next, events: [] };
       }
       case 'roomContent': {
         if (
           state.runStatus !== 'playing' ||
-          !BUILDING_LAYOUT.some((room) => room.id === action.roomId) ||
+          !CELL_BY_ID[action.roomId] ||
           !action.content ||
           typeof action.content.text !== 'string'
         ) {
@@ -196,19 +347,34 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         const kind = describeMove(reachable, action.roomId);
         if (kind === 'blocked') return reject(state, action, '这个房间现在走不到。');
         const from = state.currentRoomId;
-        const minutes = moveTimeCost(kind);
+        const minutes = moveTimeCost(kind, state, from, action.roomId);
+        const chain =
+          kind === 'knight'
+            ? state.visitedRooms[action.roomId]
+              ? 0
+              : state.knightChain + 1
+            : 0;
         let next: PlayerState = {
           ...applyTime(state, minutes),
           currentRoomId: action.roomId,
+          knightChain: chain,
           lastMoveWasKnightMove: kind === 'knight',
           lastMoveWasWalk: kind === 'walk',
           lastMoveKind: kind,
         };
         const events: GameEvent[] = [
-          { type: 'moved', from, to: action.roomId, kind, minutes },
+          { type: 'moved', from, to: action.roomId, kind, minutes, chain },
         ];
+        if (chain > 0 && chain % 3 === 0) {
+          next = applyMorale(next, 1);
+          events.push({ type: 'knightTour', chain });
+        }
         if (next.runStatus === 'playing' && !state.visitedRooms[action.roomId]) {
-          if (CASE_ROOM_IDS.includes(action.roomId as (typeof CASE_ROOM_IDS)[number]) || action.roomId === '100-1') {
+          if (
+            CASE_ROOM_IDS.includes(action.roomId as (typeof CASE_ROOM_IDS)[number]) ||
+            action.roomId === CLINAMEN_CELL ||
+            isCaseApartmentCell(action.roomId)
+          ) {
             next = cacheRoom(next, action.roomId, caseRoomContent(buildCase(state.runSeed), action.roomId));
           } else {
             events.push({ type: 'needsRoomContent', roomId: action.roomId });
@@ -246,14 +412,20 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           (candidate) => (candidate.id || candidate.label) === action.interactionId
         );
         if (!interaction) return reject(state, action, '找不到这项互动。');
-        if (!isInteractionAvailable(state, action.interactionId)) {
-          return reject(state, action, '这项互动已经结束。');
+        const lockReason = interactionLockReason(state, action.interactionId);
+        if (lockReason) {
+          return reject(state, action, lockReasonText(lockReason), lockReason);
         }
 
-        if (roomId === '100-1' && action.interactionId === FINALE_INTERACTION.id) {
+        if (roomId === CLINAMEN_CELL && action.interactionId === FINALE_INTERACTION.id) {
           const caseState = state.case;
           if (!caseState || caseState.lockedGroups.length < FINALE_MIN_GROUPS) {
-            return reject(state, action, '案卷至少要有两组对上。');
+            const lock: LockReason = {
+              kind: 'needsGroups',
+              have: caseState?.lockedGroups.length ?? 0,
+              need: FINALE_MIN_GROUPS,
+            };
+            return reject(state, action, lockReasonText(lock), lock);
           }
           let next = appendJournal(
             state,
@@ -286,11 +458,17 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           if (evidence.kind === 'look') {
             const response = evidence.text || interaction.response;
             let next = applyTime(state, TIME_INTERACTION);
-            const added = addCards(caseState, evidence.cards);
+            const added = addCards(caseState, evidence.cards, {
+              via: 'look',
+              cellId: roomId,
+              evidenceId: evidence.id,
+              minute: next.minutesPastEight,
+            });
             next = {
               ...next,
               case: {
                 ...added.caseState,
+                notebook: caseState.notebook || Boolean(evidence.grantsNotebook),
                 takenEvidence: [...caseState.takenEvidence, evidence.id],
                 notes: [...caseState.notes, response],
               },
@@ -309,7 +487,10 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           if (!evidence.skill || !evidence.difficulty || !evidence.checkKind) {
             return reject(state, action, '这项检定缺少必要资料。');
           }
-          if (state.morale <= 1) return reject(state, action, '意志太低，无法继续检定。');
+          if (state.morale <= 1) {
+            const lock: LockReason = { kind: 'lowMorale', morale: state.morale, need: 2 };
+            return reject(state, action, lockReasonText(lock), lock);
+          }
           const key = interactionKey(roomId, action.interactionId);
           const result = performSkillCheck({
             skill: evidence.skill,
@@ -327,7 +508,12 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
             morale_on_fail: clampMorale(interaction.morale_on_fail),
           });
           const cardsToGrant = result.success ? evidence.cards : evidence.failCards || [];
-          const added = addCards(caseState, cardsToGrant);
+          const added = addCards(caseState, cardsToGrant, {
+            via: result.success ? 'check' : 'checkFail',
+            cellId: roomId,
+            evidenceId: evidence.id,
+            minute: next.minutesPastEight,
+          });
           const taken =
             result.success || evidence.checkKind === 'red'
               ? [...caseState.takenEvidence, evidence.id]
@@ -398,8 +584,9 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         }
 
         const key = interactionKey(roomId, action.interactionId);
-        if (state.morale <= 1) {
-          return reject(state, action, '意志太低，无法继续检定。');
+          if (state.morale <= 1) {
+            const lock: LockReason = { kind: 'lowMorale', morale: state.morale, need: 2 };
+            return reject(state, action, lockReasonText(lock), lock);
         }
 
         const result = performSkillCheck({
@@ -443,6 +630,10 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         if (state.runStatus !== 'playing' || !state.case) {
           return reject(state, action, '现在不能补写案卷。');
         }
+        if (!state.case.notebook) {
+          const lock: LockReason = { kind: 'needsNotebook' };
+          return reject(state, action, '还没有速写本。', lock);
+        }
         const graph = buildCase(state.runSeed);
         const slot = graph.slots.find((candidate) => candidate.id === action.slotId);
         if (!slot) return reject(state, action, '找不到这一格。');
@@ -473,6 +664,10 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         if (state.runStatus !== 'playing' || !state.case) {
           return reject(state, action, '现在不能联想。');
         }
+        if (!state.case.notebook) {
+          const lock: LockReason = { kind: 'needsNotebook' };
+          return reject(state, action, '还没有速写本。', lock);
+        }
         if (
           action.a === action.b ||
           !state.case.cards.includes(action.a) ||
@@ -490,7 +685,7 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           return reject(state, action, '这两张词卡已经联想过了。');
         }
         if (!recipe) {
-          const next = applyTime(state, TIME_COMBINE);
+          const next = applyTime(state, combineTimeCost(state));
           return {
             state: next,
             events: [
@@ -499,8 +694,13 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
             ],
           };
         }
-        const added = addCards(state.case, recipe.cards);
-        let next = applyTime(state, TIME_COMBINE);
+        let next = applyTime(state, combineTimeCost(state));
+        const added = addCards(state.case, recipe.cards, {
+          via: 'recipe',
+          cellId: state.currentRoomId || CHAPTER_ONE_CELL,
+          recipeId: recipe.id,
+          minute: next.minutesPastEight,
+        });
         next = {
           ...next,
           case: {
@@ -521,6 +721,10 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         if (state.runStatus !== 'playing' || !state.case) {
           return reject(state, action, '现在不能对照案卷。');
         }
+        if (!state.case.notebook) {
+          const lock: LockReason = { kind: 'needsNotebook' };
+          return reject(state, action, '还没有速写本。', lock);
+        }
         const graph = buildCase(state.runSeed);
         const group = graph.groups.find((candidate) => candidate.id === action.groupId);
         if (!group) return reject(state, action, '找不到这一组。');
@@ -535,6 +739,7 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
         );
         let next = applyTime(state, TIME_SUBMIT);
         if (correct) {
+          next = applyMorale(next, 1);
           next = {
             ...next,
             case: {
@@ -550,7 +755,12 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
             ],
           };
         }
-        next = applyMorale(next, WRONG_SUBMIT_MORALE);
+        next = applyMorale(
+          next,
+          hasInternalizedThought(state, 'catalogue')
+            ? WRONG_SUBMIT_MORALE - 1
+            : WRONG_SUBMIT_MORALE
+        );
         next = {
           ...next,
           case: {
@@ -566,10 +776,61 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
           ],
         };
       }
+      case 'ponder': {
+        if (state.runStatus !== 'playing' || !state.case) {
+          return reject(state, action, '现在不能默念案卷。');
+        }
+        if (!state.case.notebook) {
+          const lock: LockReason = { kind: 'needsNotebook' };
+          return reject(state, action, '还没有速写本。', lock);
+        }
+        const graph = buildCase(state.runSeed);
+        const group = graph.groups.find((candidate) => candidate.id === action.groupId);
+        if (!group) return reject(state, action, '找不到这一组。');
+        if (state.case.lockedGroups.includes(group.id)) {
+          return reject(state, action, '这一组已经锁定。');
+        }
+        if (group.slots.some((slot) => !state.case!.slots[slot.id])) {
+          return reject(state, action, '这一组还有空格。');
+        }
+        if (state.morale < 2) return reject(state, action, '意志不够了。');
+        const arrangement = group.slots.map((slot) => state.case!.slots[slot.id]).join(',');
+        const previous = state.case.pondered[group.id]?.split('\n').filter(Boolean) || [];
+        if (previous.includes(arrangement)) {
+          return reject(state, action, '同样的排法已经默念过了。');
+        }
+        const correct = group.slots.filter(
+          (slot) => state.case!.slots[slot.id] === slot.answer
+        ).length;
+        const next = applyMorale(state, -1);
+        return {
+          state: {
+            ...next,
+            case: {
+              ...state.case,
+              pondered: {
+                ...state.case.pondered,
+                [group.id]: [...previous, arrangement].join('\n'),
+              },
+              notes: [
+                ...state.case.notes,
+                `默念 ${group.title}：三格里有 ${correct} 格是对的。`,
+              ],
+            },
+          },
+          events: [
+            { type: 'pondered', groupId: group.id, correct },
+            ...endingEvent(state, next),
+          ],
+        };
+      }
       case 'internalize': {
         if (state.runStatus !== 'playing') return reject(state, action, '这一局已经结束。');
         const thought = state.thoughts.find((candidate) => candidate.id === action.thoughtId);
         if (!thought || thought.internalized) return reject(state, action, '这个念头无法内化。');
+        if (state.thoughts.filter((candidate) => candidate.internalized).length >= THOUGHT_SLOTS) {
+          return reject(state, action, '念头只能住进两个。');
+        }
         const next = internalizeThought(state, action.thoughtId);
         return {
           state: next,
@@ -598,4 +859,52 @@ export function step(state: PlayerState, action: Action): { state: PlayerState; 
   } catch {
     return reject(state, action, '行动资料无效。');
   }
+}
+
+function applyHourPages(
+  before: PlayerState,
+  result: { state: PlayerState; events: GameEvent[] }
+): { state: PlayerState; events: GameEvent[] } {
+  if (
+    before.runStatus !== 'playing' ||
+    result.state.runStatus !== 'playing' ||
+    result.state.minutesPastEight <= before.minutesPastEight
+  ) {
+    return result;
+  }
+
+  let next = result.state;
+  const events = [...result.events];
+  CASE_HOUR_PAGES.forEach((page) => {
+    if (
+      next.runStatus !== 'playing' ||
+      before.minutesPastEight >= page.minute ||
+      result.state.minutesPastEight < page.minute
+    ) {
+      return;
+    }
+    const pageStart = next;
+    next = {
+      ...next,
+      case: next.case
+        ? { ...next.case, notes: [...next.case.notes, page.text] }
+        : next.case,
+    };
+    events.push({ type: 'hourTurned', ...page, roomIds: [...page.roomIds] });
+    if (hasInternalizedThought(next, 'steam')) {
+      next = applyMorale(next, -1);
+      events.push(...endingEvent(pageStart, next));
+    }
+  });
+  return {
+    state: next,
+    events:
+      next.runStatus === 'playing'
+        ? events
+        : events.filter((event) => event.type !== 'needsRoomContent'),
+  };
+}
+
+export function step(state: PlayerState, action: Action): { state: PlayerState; events: GameEvent[] } {
+  return applyHourPages(state, stepAction(state, action));
 }

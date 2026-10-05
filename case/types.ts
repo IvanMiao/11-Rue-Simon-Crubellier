@@ -1,4 +1,10 @@
-import type { CheckDifficulty, CheckKind, SkillId, StoryBible } from '../types';
+import type {
+  CheckDifficulty,
+  CheckKind,
+  SkillId,
+  StoryBible,
+  ThoughtSeed,
+} from '../types';
 
 export type LiarId = 'p-nochere' | 'p-smautf' | 'p-valene';
 
@@ -37,6 +43,9 @@ export interface CaseEvidence {
   kind: 'look' | 'check';
   label: string;
   cards: string[];
+  grantsNotebook?: boolean;
+  availableFrom?: number;
+  requiresItem?: string;
   failCards?: string[];
   text?: string;
   successText?: string;
@@ -44,6 +53,25 @@ export interface CaseEvidence {
   skill?: SkillId;
   difficulty?: CheckDifficulty;
   checkKind?: CheckKind;
+}
+
+export interface CaseItem {
+  id: string;
+  name: string;
+  description: string;
+  roomId: string;
+}
+
+export interface CaseHourPage {
+  minute: 60 | 120 | 180;
+  hour: 21 | 22 | 23;
+  title: string;
+  text: string;
+  roomIds: string[];
+}
+
+export interface CaseThought extends ThoughtSeed {
+  effect: 'knight' | 'catalogue' | 'steam';
 }
 
 export interface CaseRecipe {
@@ -67,15 +95,26 @@ export interface CaseGraph {
 export interface CaseState {
   liar: LiarId;
   handSkill: 'perception' | 'logic';
+  notebook: boolean;
   cards: string[];
+  cardSources: Record<string, CardSource>;
   takenEvidence: string[];
   usedRecipes: string[];
   slots: Record<string, string | null>;
   lockedGroups: string[];
   wrongSubmissions: number;
   retryMarks: Record<string, number>;
+  pondered: Record<string, string>;
   notes: string[];
   grade?: number;
+}
+
+export interface CardSource {
+  via: 'look' | 'check' | 'checkFail' | 'recipe';
+  cellId: string;
+  evidenceId?: string;
+  recipeId?: string;
+  minute: number;
 }
 
 export interface CaseBible extends StoryBible {}

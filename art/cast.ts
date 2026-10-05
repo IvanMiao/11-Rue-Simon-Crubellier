@@ -6,7 +6,7 @@ import { PALETTE, TONES } from './palette';
 export type CastId = 'bartlebooth' | 'winckler' | 'morellet' | 'nochere' | 'smautf' | 'valene' | 'marquiseau';
 
 /** One frozen pose per resident: what they were doing at 20:00 when time stopped. */
-export type Pose = 'reach' | 'saw' | 'pour' | 'sweep' | 'valise' | 'paint' | 'tray';
+export type Pose = 'reach' | 'seatedReach' | 'saw' | 'pour' | 'sweep' | 'valise' | 'paint' | 'tray';
 
 export type Costume = 'frockcoat' | 'cardiganApron' | 'labcoat' | 'housecoatApron' | 'waistcoat' | 'smock' | 'dress';
 export type HairStyle = 'swept' | 'thinning' | 'bald' | 'headscarf' | 'fringe' | 'bun';
@@ -90,7 +90,7 @@ export const CAST: Record<CastId, CastMember> = {
     coat: TONES.navy,
     trousers: TONES.charcoal,
     trim: PALETTE.linen,
-    pose: 'reach',
+    pose: 'seatedReach',
     signature: ['shape-w', 'i-magnifier', 'i-paintbox'],
     wall: PALETTE.wall,
     floor: PALETTE.floor,
@@ -111,8 +111,8 @@ export const CAST: Record<CastId, CastMember> = {
     trim: TONES.leather,
     pose: 'saw',
     signature: ['i-fretsaw', 'o-cut-notes', 'o-ledger-439'],
-    wall: '#d9c79c',
-    floor: '#9b6a3c',
+    wall: PALETTE.castWallSand,
+    floor: PALETTE.castFloorOchre,
     deceased: true,
   },
   morellet: {
@@ -131,8 +131,8 @@ export const CAST: Record<CastId, CastMember> = {
     trim: TONES.bandage,
     pose: 'pour',
     signature: ['o-blank-sheet', 'i-flask', 'i-bandage'],
-    wall: '#dfe3d6',
-    floor: '#8f7a5e',
+    wall: PALETTE.castWallMint,
+    floor: PALETTE.castFloorTaupe,
   },
   nochere: {
     id: 'nochere',
@@ -150,8 +150,8 @@ export const CAST: Record<CastId, CastMember> = {
     trim: TONES.apron,
     pose: 'sweep',
     signature: ['i-keys', 'o-coal-glove', 'i-broom'],
-    wall: '#d8d2bd',
-    floor: '#a7643c',
+    wall: PALETTE.castWallStone,
+    floor: PALETTE.castFloorRust,
   },
   smautf: {
     id: 'smautf',
@@ -169,8 +169,8 @@ export const CAST: Record<CastId, CastMember> = {
     trim: PALETTE.linen,
     pose: 'valise',
     signature: ['i-valise', 'i-sums', 'o-receipt'],
-    wall: '#cfd8bf',
-    floor: '#8f5b3a',
+    wall: PALETTE.castWallSage,
+    floor: PALETTE.castFloorChestnut,
   },
   valene: {
     id: 'valene',
@@ -188,8 +188,8 @@ export const CAST: Record<CastId, CastMember> = {
     trim: PALETTE.linen,
     pose: 'paint',
     signature: ['o-wet-brush', 'i-palette', 'i-elevation'],
-    wall: '#e6dcc3',
-    floor: '#b88a5a',
+    wall: PALETTE.castWallCream,
+    floor: PALETTE.castFloorHoney,
   },
   marquiseau: {
     id: 'marquiseau',
@@ -206,8 +206,8 @@ export const CAST: Record<CastId, CastMember> = {
     trim: PALETTE.linen,
     pose: 'tray',
     signature: ['i-teacup', 'i-letter', 'i-mirror'],
-    wall: '#f0d0bd',
-    floor: '#7f4a3a',
+    wall: PALETTE.castWallRose,
+    floor: PALETTE.castFloorMahogany,
   },
 };
 

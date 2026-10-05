@@ -31,29 +31,38 @@ Run it: `npm run dev`, then open `/style-lab.html` (press `1` room view, `2` sec
 - Furniture: turned legs with mouldings and aprons, upholstered armchairs with buttons and nail trim, wardrobes with cornice, panels and handles, bentwood chairs.
 - Empty rooms now hold dust-sheeted armchair, table and wardrobe whose silhouettes survive under the sheet, plus stacked frames.
 
+## Resolved in A3
+- The paper theatre is in the game: every chapter page opens with a plate of that cell's dollhouse room (`art/stage/`, lazy-loaded so three.js stays out of the main chunk; `npm run check:bundle` guards it).
+- Case cells have their own compact rooms (`art/stage/cellScenes.ts`, `art/stage/cellRooms.ts`): stairs with Valène's sketchbook, hall mailboxes and lift dial, loge, Bartlebooth's puzzle table and sill, Winckler's bench and empty chair, Smautf, Valène's blank canvas, Morellet's lab, the cellar boiler and coal, the antique-shop counter, Cinoc's slips and the bitten Clinamen cell. Other cells assemble dust-sheeted furniture from their seed.
+- Evidence tags sit on the objects in the scene, show the same status glyph as the room sheet and arm the same line; hovering a sheet line highlights its tag.
+- Hour light reaches the rooms (sun colour/angle per hour, night windows and lit pendants at 23:00); the case file switches the stage to a blueprint filter.
+- The camera pushes in on entering a cell; the knight moves along an L on the canvas.
+- Bartlebooth sits at the puzzle (`seatedReach`); checks show a hand holding, shaking and dropping the engine's two dice (`art/draw/hand.ts`).
+- The light shaft fades to zero at its side edges, so no rectangle shows over figures.
+- `/cells.html` is a contact sheet of every case room (`?hour=23`, `?mode=blueprint`) for visual regression.
+
 ## Known shortcomings (to address later)
 
 ### Residents (cut-out figures)
-- One frozen pose per resident and all standing; no seated, crouching or lying poses (Bartlebooth should be seated at the puzzle).
+- One frozen pose per resident; only Bartlebooth is seated, there are no crouching or lying poses.
 - Hands are ovals; contact with objects is implied by overlap, not drawn grips. Morellet's missing fingers only show as a bandaged back hand.
 - Busts are the figure head scaled up, not separate portraits; no expression changes.
 - The cast covers the seven M2 residents only; the planned ~20-resident cast is not drawn.
 - Cut-outs are flat cards with a small foot; no visible paper thickness or slight curl.
 
 ### Furniture and props
-- Boiler, coal pile and counter exist only in the prop library: the cellar (−1-3) and antique shop (0-3) are not in the style-lab building section.
+- The style-lab building section still shows floors II–IV only; the cellar and shop exist as in-game cell rooms.
 - The two empty rooms use the same dust-sheet arrangement (only jitter differs); there is no seed-driven room assembly yet, each room kind is still hand-placed in `furnish()`.
 - Dust sheets are a recoloured copy of the prop plus a folded skirt; the sheet does not drape over arms or backs.
 - Book spines, pegboard tools and shelves are still textures or flat boxes.
 
 ### Lighting and rendering
-- The light shaft is an additive prism; its side faces can show as faint rectangles over figures standing in it.
 - Dust motes are fixed screen-size points (scaled by zoom); they look busy in the section view.
-- Rooms all share one sun; there is no per-room lamp light, night state or hourly page-turn yet.
+- Hour light is global per hour; lamps are not yet tied to individual residents or room signals.
 - Ink lines come only from depth/normal breaks, so coplanar details (rug border, plank seams) rely on texture lines.
 - Screenshots were produced with software WebGL; real-GPU performance has not been profiled.
 
 ### Scene and UI
 - Room labels on slab fronts are small in the section view.
-- Camera transition is a straight zoom; the planned L-shaped knight-move camera path is not implemented.
-- The blueprint (case-file) filter mode is not implemented.
+- Hotspot tags for nearby anchors are offset vertically, so some sit above their object rather than on it (e.g. Bartlebooth’s hand).
+- The in-game plate is one cell; there is no camera flight through the full building section yet.

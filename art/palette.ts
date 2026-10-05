@@ -21,6 +21,18 @@ export const PALETTE = {
   accent: '#c8372d',
   linen: '#f7f1e3',
   green: '#4e8f5a',
+  castWallSand: '#d9c79c',
+  castFloorOchre: '#9b6a3c',
+  castWallMint: '#dfe3d6',
+  castFloorTaupe: '#8f7a5e',
+  castWallStone: '#d8d2bd',
+  castFloorRust: '#a7643c',
+  castWallSage: '#cfd8bf',
+  castFloorChestnut: '#8f5b3a',
+  castWallCream: '#e6dcc3',
+  castFloorHoney: '#b88a5a',
+  castWallRose: '#f0d0bd',
+  castFloorMahogany: '#7f4a3a',
 } as const;
 
 /** Tones for the A2 cast and card glyphs (skin, hair, cloth). Cast specs in art/cast.ts reference these. */
@@ -97,4 +109,58 @@ export const TYPE = {
   display: "'Noto Serif SC', 'Noto Serif CJK SC', 'Lora', serif",
   body: "'Noto Serif SC', 'Noto Serif CJK SC', 'Lora', serif",
   mono: "'Courier Prime', 'DejaVu Sans Mono', monospace",
+};
+
+/** Valène's canvas: charcoal grid on primed linen. */
+export const CHARCOAL = {
+  line: '#2a2724',
+  faint: '#8c847a',
+  number: '#6f675d',
+  primed: '#f1eadb',
+  wall: '#1c1a19',
+};
+
+/** Watercolour wash used when a cell has been entered, keyed by apartment id. */
+export const WASH: Record<string, string> = {
+  '3-1': TONES.navy,
+  '6-3': TONES.ochre,
+  '8-6': TONES.steel,
+  '0-4': TONES.cobalt,
+  '8-2': TONES.bottle,
+  '7-7': TONES.aubergine,
+  '6-1': TONES.rose,
+  '0-5': PALETTE.wallMotif,
+  STAIRS: PALETTE.wood,
+  '0-3': TONES.leather,
+  '-1-3': TONES.coal,
+  '-1-5': TONES.slate,
+};
+
+/** Fallback washes for every other apartment, picked by a stable hash. */
+export const WASH_FALLBACK = [
+  PALETTE.floor,
+  PALETTE.green,
+  PALETTE.sea,
+  TONES.sepia,
+  TONES.hairAuburn,
+  TONES.pine,
+  TONES.plum,
+  PALETTE.roof,
+];
+
+/**
+ * Canvas relight per hour. The clock never stops, but the painting only changes its light
+ * on the hour: 20:00 low gold from the rear facade, then amber, rose, and finally night.
+ */
+export const HOUR_LIGHT: Record<20 | 21 | 22 | 23, { tint: string; shade: string; angle: number; strength: number; night: number }> = {
+  20: { tint: '#ffd9a3', shade: '#7a4c2a', angle: 112, strength: 0.32, night: 0 },
+  21: { tint: '#f6b26b', shade: '#6b3d2a', angle: 100, strength: 0.36, night: 0.08 },
+  22: { tint: '#e8875a', shade: '#3d2b4a', angle: 84, strength: 0.4, night: 0.22 },
+  23: { tint: '#9fb4d9', shade: '#1b2440', angle: 70, strength: 0.42, night: 0.42 },
+};
+
+export const BLUEPRINT = {
+  ground: '#263b4a',
+  line: '#e1e4dc',
+  fill: '#728792',
 };

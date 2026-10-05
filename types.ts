@@ -77,6 +77,7 @@ export interface ThoughtSeed {
   title: string;
   description: string;
   skill: SkillId;
+  effect?: 'knight' | 'catalogue' | 'steam';
 }
 
 export interface NarrativeResponse {
@@ -146,6 +147,7 @@ export interface Thought {
   title: string;
   description: string;
   skill: SkillId;
+  effect?: 'knight' | 'catalogue' | 'steam';
   internalized: boolean;
 }
 
@@ -184,6 +186,7 @@ export interface PlayerState {
   minutesPastEight: number;
   morale: number;
   maxMorale: number;
+  knightChain: number;
   currentRoomId: string | null;
   visitedRooms: Record<string, NarrativeResponse>;
   resolvedChecks: Record<string, boolean>;

@@ -1,23 +1,43 @@
-import { DIFFICULTY_DC } from '../constants/skills';
-import { describeMove, getAdjacentRooms, getReachableRooms, getValidKnightMoves } from './gridLogic';
-import { applyMorale, applyTime, beginRun, clockLabel, INITIAL_PLAYER_STATE } from './gameLogic';
+import { DEFAULT_SKILLS, DIFFICULTY_DC, START_ROOM_ID } from '../constants/skills';
+import { getAdjacentRooms, getReachableRooms, getValidKnightMoves } from './gridLogic';
+import {
+  applyMorale,
+  applyTime,
+  beginRun,
+  clockLabel,
+  INITIAL_PLAYER_STATE,
+  moveTimeCost,
+} from './gameLogic';
 import { performSkillCheck } from './skillCheck';
-import { DEFAULT_SKILLS } from '../constants/skills';
 import { FALLBACK_BIBLE } from './fallbackContent';
+import { CLINAMEN_CELL, CHAPTER_ONE_CELL } from '../world/damier';
 
 function assert(cond: unknown, msg: string) {
   if (!cond) throw new Error(msg);
 }
 
-const hallNeighbors = getAdjacentRooms('0-5');
-assert(hallNeighbors.includes('ELEVATOR'), `HALL should touch elevator, got ${hallNeighbors.join(',')}`);
+const startNeighbors = getAdjacentRooms(CHAPTER_ONE_CELL);
+assert(startNeighbors.includes('3:5'), `3:6 should touch 3:5, got ${startNeighbors.join(',')}`);
 
-const knightFromHall = getValidKnightMoves('0-5');
-assert(knightFromHall.length > 0, 'HALL should have knight moves');
+const knightFromStart = getValidKnightMoves(CHAPTER_ONE_CELL);
+assert(knightFromStart.length > 0, '3:6 should have knight moves');
+assert(!knightFromStart.includes(CLINAMEN_CELL), 'knight moves never target the clinamen');
 
-const reachable = getReachableRooms('0-5');
-assert(reachable.all.size > 0, 'HALL must have destinations');
-assert(describeMove(reachable, 'ELEVATOR') !== 'blocked', 'Elevator should be reachable from HALL');
+const reachable = getReachableRooms(CHAPTER_ONE_CELL);
+assert(reachable.all.size > 0, '3:6 must have destinations');
+assert(reachable.walk.has('3:5'), '3:6 to 3:5 is an orthogonal walk');
+assert(moveTimeCost('walk', undefined, '3:6', '3:5') === 15, 'cross-apartment walks cost fifteen minutes');
+assert(moveTimeCost('walk', undefined, '3:5', '3:4') === 5, 'same-apartment walks cost five minutes');
+assert(reachable.elevator.has('0:6'), '3:6 can use the elevator to 0:6');
+assert(
+  getReachableRooms(null).walk.has(START_ROOM_ID) && getReachableRooms(null).all.size === 1,
+  'a run with no current cell routes to 3:6'
+);
+assert(!getReachableRooms('-1:2').walk.has(CLINAMEN_CELL), 'clinamen is gated before two groups are locked');
+assert(
+  getReachableRooms('-1:2', { hundredthUnlocked: true }).walk.has(CLINAMEN_CELL),
+  'clinamen is walkable from -1:2 after the finale gate unlocks'
+);
 
 const check = performSkillCheck({
   skill: 'logic',
@@ -61,7 +81,7 @@ const started = beginRun(
   42,
   FALLBACK_BIBLE
 );
-assert(started.currentRoomId === '0-5', 'start in hall');
+assert(started.currentRoomId === START_ROOM_ID, 'start in chapter-one cell 3:6');
 assert(started.plotThreads.length === FALLBACK_BIBLE.plot_threads.length, 'threads copied');
 
 console.log('game logic checks passed');
