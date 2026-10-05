@@ -24,6 +24,7 @@ export interface FlatsAtlasInput {
   hour: 20 | 21 | 22 | 23;
   view: SectionView;
   builtRooms: ReadonlySet<string>;
+  priorityCellIds?: ReadonlySet<string>;
 }
 
 export interface FlatsAtlas {
@@ -478,7 +479,7 @@ function drawTile(
       ctx.font = `bold 104px ${TYPE.mono}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillText(chapterNumeral(cell.chapter), 28, 34);
+      ctx.fillText(chapterNumeral(cell.chapter), 28, 72);
     }
     ctx.strokeStyle = rgba(CHARCOAL.line, 0.55);
     ctx.lineWidth = 2.5;
@@ -529,7 +530,7 @@ function drawTile(
       ctx.font = `bold 48px ${TYPE.mono}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillText(chapterNumeral(cell.chapter), 25, 27);
+      ctx.fillText(chapterNumeral(cell.chapter), 25, 72);
       ctx.restore();
     }
     ctx.strokeStyle = rgba(PALETTE.ink, 0.48);
@@ -635,21 +636,28 @@ export function createFlatsAtlas(initial: FlatsAtlasInput): FlatsAtlas {
   }
 
   function visibleCellIds(input: FlatsAtlasInput): Set<string> {
-    if (input.view === 'building') return new Set(SECTION_CELL_IDS);
-    const focus = CELL_BY_ID[input.focusCellId];
-    if (!focus) return new Set();
-    const centerFloor = input.view === 'block' ? Math.max(1, Math.min(6, focus.floor)) : focus.floor;
-    const centerCol = input.view === 'block' ? Math.max(3, Math.min(8, focus.col)) : focus.col;
-    const extent = input.view === 'block' ? 2 : 1;
-    return new Set(
-      SECTION_CELL_IDS.filter((cellId) => {
-        const cell = CELL_BY_ID[cellId];
-        return (
-          Math.abs(cell.floor - centerFloor) <= extent &&
-          Math.abs(cell.col - centerCol) <= extent
-        );
-      })
-    );
+    const visible = new Set<string>();
+    if (input.view === 'building') {
+      for (const cellId of SECTION_CELL_IDS) visible.add(cellId);
+    } else {
+      const focus = CELL_BY_ID[input.focusCellId];
+      if (focus) {
+        const centerFloor = input.view === 'block' ? Math.max(1, Math.min(6, focus.floor)) : focus.floor;
+        const centerCol = input.view === 'block' ? Math.max(3, Math.min(8, focus.col)) : focus.col;
+        const extent = input.view === 'block' ? 2 : 1;
+        for (const cellId of SECTION_CELL_IDS) {
+          const cell = CELL_BY_ID[cellId];
+          if (
+            Math.abs(cell.floor - centerFloor) <= extent &&
+            Math.abs(cell.col - centerCol) <= extent
+          ) {
+            visible.add(cellId);
+          }
+        }
+      }
+    }
+    for (const cellId of input.priorityCellIds ?? []) visible.add(cellId);
+    return visible;
   }
 
   function renderCell(cellId: string, input: FlatsAtlasInput): boolean {

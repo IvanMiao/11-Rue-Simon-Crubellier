@@ -565,10 +565,11 @@ export function mountBuilding(
   }
 
   function builtRoomIds(): Set<string> {
+    if (!roomsRoot.visible || cameraFlight) return new Set();
     return new Set([...rooms].filter(([, entry]) => entry.group.visible).map(([id]) => id));
   }
 
-  function refreshAtlas() {
+  function refreshAtlas(priorityCellIds?: ReadonlySet<string>) {
     atlas.refresh({
       focusCellId: currentInput.focus,
       visited: new Set(currentInput.visited),
@@ -576,6 +577,7 @@ export function mountBuilding(
       hour: currentInput.hour,
       view: currentInput.view,
       builtRooms: builtRoomIds(),
+      priorityCellIds,
     });
   }
 
@@ -634,12 +636,7 @@ export function mountBuilding(
     roomBuildMs += lastRoomBuildMs;
     roomsBuilt += 1;
     shadowDirty = true;
-    if (
-      !atlasRefreshPending &&
-      (cellId === currentInput.focus || roomQueue.length === 0)
-    ) {
-      refreshAtlas();
-    }
+    atlasRefreshPending = true;
     updateLighting(currentInput);
   }
 
@@ -675,6 +672,7 @@ export function mountBuilding(
       flightHeight,
     };
     cameraTween = null;
+    refreshAtlas(new Set(SECTION_CELL_IDS));
     if (frame) {
       cancelAnimationFrame(frame);
       frame = 0;
@@ -723,10 +721,6 @@ export function mountBuilding(
 
       if (progress >= 1) {
         cameraFlight = null;
-        if (atlasRefreshPending) {
-          refreshAtlas();
-          atlasRefreshPending = false;
-        }
         setKnightCell(flight.path[flight.path.length - 1]);
         addCameraTween(frameForCell(currentInput.view, currentInput.focus), 700);
       }
@@ -1052,6 +1046,10 @@ export function mountBuilding(
     section.group.visible = !flightActive;
     atlas.mesh.visible = true;
     roomsRoot.visible = !cameraFlight && (focusRoomReady || firstReadyMs !== null);
+    if (!cameraFlight && atlasRefreshPending) {
+      refreshAtlas();
+      atlasRefreshPending = false;
+    }
     renderer.shadowMap.enabled = !flightActive;
     if (!loading && shadowDirty && firstInkRenderMs !== null) {
       renderer.shadowMap.needsUpdate = true;
