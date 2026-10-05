@@ -23,7 +23,7 @@ export function paperCutout(src: HTMLCanvasElement, worldHeight: number, opts: {
   const w = (worldHeight * src.width) / src.height;
   const geo = new THREE.PlaneGeometry(w, worldHeight);
   geo.translate(0, worldHeight / 2, 0);
-  const mat = toonMaterial('#ffffff', { map, alphaTest: 0.5, side: THREE.DoubleSide });
+  const mat = toonMaterial(PALETTE.paper, { map, alphaTest: 0.5, side: THREE.DoubleSide });
   const card = new THREE.Mesh(geo, mat);
   card.castShadow = true;
   card.receiveShadow = true;

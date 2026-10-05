@@ -52,6 +52,40 @@ export const ANCHORS: Record<string, [number, number, number]> = {
   '100-1-finale': [0, 0.82, 0.25],
 };
 
+export const PLAYER_SPOT: Record<CellRoomKind, [x: number, y: number, z: number]> = {
+  stair: [1.3, 0.04, -1.1],
+  hall: [-1.28, 0.04, 1.2],
+  loge: [1.25, 0.04, 1.2],
+  atelier: [1.35, 0.04, 1.25],
+  sill: [1.3, 0.04, 1.2],
+  workshop: [1.32, 0.04, 1.2],
+  servant: [-1.3, 0.04, 1.2],
+  studio: [-1.3, 0.04, 1.2],
+  lab: [-1.3, 0.04, 1.2],
+  boiler: [1.3, 0.04, 1.2],
+  shop: [1.3, 0.04, 1.2],
+  archive: [-1.3, 0.04, 1.2],
+  clinamen: [1.3, 0.04, 1.2],
+  empty: [1.3, 0.04, -1.2],
+};
+
+export const PLAYER_SPOT_ANCHORS: Partial<Record<CellRoomKind, readonly string[]>> = {
+  stair: ['ev-stair-notebook'],
+  hall: ['ev-hall-mailboxes', 'ev-hall-lift'],
+  loge: ['ev-loge-notice', 'ev-loge-ask'],
+  atelier: ['ev-bb-puzzle', 'ev-bb-hand', 'ev-bb-hand-late'],
+  sill: ['ev-bb-sill'],
+  workshop: ['ev-wk-bench', 'ev-wk-chair'],
+  servant: ['ev-sm-ask'],
+  studio: ['ev-va-ask', 'ev-va-canvas'],
+  lab: ['ev-mo-vat'],
+  boiler: ['ev-ch-coal'],
+  shop: ['ev-an-receipt'],
+  archive: ['ev-ci-dict'],
+  clinamen: ['100-1-finale'],
+  empty: [],
+};
+
 function hash(value: string): number {
   let result = 0;
   for (const character of value) result = (result * 31 + character.charCodeAt(0)) >>> 0;
@@ -97,7 +131,12 @@ export function cellScene(cellId: string): CellScene {
   }
   if (apartmentId === '0-4') return scene('loge', cellId, apartmentId, 'nochere');
   if (apartmentId === '3-1') {
-    return scene(cellId === '3:1' ? 'atelier' : 'sill', cellId, apartmentId, cellId === '3:1' ? 'bartlebooth' : undefined);
+    if (cellId === '3:1') return scene('atelier', cellId, apartmentId, 'bartlebooth');
+    return {
+      ...scene('sill', cellId, apartmentId),
+      wall: PALETTE.castWallCream,
+      floor: PALETTE.paperDeep,
+    };
   }
   if (apartmentId === '6-3') return scene('workshop', cellId, apartmentId, 'winckler');
   if (apartmentId === '8-2') return scene('servant', cellId, apartmentId, 'smautf');

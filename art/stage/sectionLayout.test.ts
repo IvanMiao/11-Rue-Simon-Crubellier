@@ -9,6 +9,7 @@ import {
   SECTION_PITCH,
 } from './sectionLayout';
 import { CELL_BY_ID, CELLS, CLINAMEN_CELL } from '../../world/damier';
+import { CELL_ROOM } from './cellScenes';
 
 const knightOffsets: Array<[number, number]> = [
   [2, 1], [2, -1], [-2, 1], [-2, -1],
@@ -74,16 +75,40 @@ assert.deepEqual(flightPath('0:7', '-1:7', 'elevator'), ['0:7', '-1:7']);
 const allVisited = new Set(SECTION_CELL_IDS);
 for (const focus of ['3:6', '8:1', '-1:10']) {
   const counts = { room: 0, painted: 0, sketch: 0, void: 0 };
-  for (const cell of CELLS) counts[detailTier(cell.id, focus, allVisited)] += 1;
+  for (const cell of CELLS) counts[detailTier(cell.id, focus, allVisited, 'room')] += 1;
   assert.ok(counts.room <= 9, `${focus} has at most nine full rooms`);
   assert.equal(counts.sketch, 0);
   assert.equal(counts.painted + counts.room + counts.void, 100);
 }
-assert.equal(detailTier(CLINAMEN_CELL, '3:6', new Set()), 'void');
-assert.equal(detailTier('3:6', '3:6', new Set()), 'room');
-assert.equal(detailTier('3:7', '3:6', new Set()), 'room');
-assert.equal(detailTier('8:1', '3:6', new Set(['8:1'])), 'painted');
-assert.equal(detailTier('8:1', '3:6', new Set()), 'sketch');
+assert.equal(detailTier(CLINAMEN_CELL, '3:6', new Set(), 'room'), 'void');
+assert.equal(detailTier('3:6', '3:6', new Set(), 'room'), 'room');
+assert.equal(detailTier('3:7', '3:6', new Set(), 'room'), 'room');
+assert.equal(detailTier('8:1', '3:6', new Set(['8:1']), 'room'), 'painted');
+assert.equal(detailTier('8:1', '3:6', new Set(), 'room'), 'sketch');
+assert.equal(detailTier('3:7', '3:6', new Set(), 'building'), 'sketch');
+assert.equal(detailTier('3:7', '3:6', new Set(['3:7']), 'building'), 'painted');
+assert.equal(detailTier('3:6', '3:6', new Set(), 'building'), 'room');
+const buildingCounts = { room: 0, painted: 0, sketch: 0, void: 0 };
+for (const cell of CELLS) {
+  buildingCounts[detailTier(cell.id, '3:6', allVisited, 'building')] += 1;
+}
+assert.equal(buildingCounts.room, 1);
+assert.equal(buildingCounts.painted, 98);
+assert.equal(buildingCounts.void, 1);
+const roomFrame = frameFor('room', '3:6', 16 / 9);
+assert.ok(Math.abs(roomFrame.target[1] - (3 * SECTION_PITCH.y + 1.5)) < 1e-9);
+assert.ok(Math.abs((roomFrame.yaw * 180) / Math.PI - 23) < 1e-9);
+assert.ok(Math.abs((roomFrame.pitch * 180) / Math.PI - 10) < 1e-9);
+const roomWidth = roomFrame.viewHeight * (16 / 9);
+const neighbourShare = (roomWidth - 3.4) / (2 * SECTION_PITCH.x);
+assert.ok(neighbourShare >= 0.2 && neighbourShare <= 0.35);
+const gameRoomFrame = frameFor('room', '3:6', 1.14);
+const gameRoomWidth = gameRoomFrame.viewHeight * 1.14;
+const gameNeighbourShare = (gameRoomWidth - CELL_ROOM.W) / (2 * SECTION_PITCH.x);
+assert.ok(gameNeighbourShare >= 0.2 && gameNeighbourShare <= 0.3);
+assert.ok(CELL_ROOM.H / gameRoomFrame.viewHeight >= 0.65);
+const clinamenFrame = frameFor('room', CLINAMEN_CELL, 16 / 9);
+assert.equal(clinamenFrame.viewHeight, 4.4);
 assert.equal(SECTION_PITCH.x, 3.52);
 assert.equal(SECTION_PITCH.y, 3.24);
 assert.equal(CELL_BY_ID['-1:1'].id, CLINAMEN_CELL);

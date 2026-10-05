@@ -12,8 +12,8 @@ const COLUMN_MAX = 10;
 const PITCH_X = CELL_ROOM.W + 0.12;
 const PITCH_Y = CELL_ROOM.H + 0.24;
 const BUILDING_WIDTH = (COLUMN_MAX - COLUMN_MIN + 1) * PITCH_X;
-const ROOM_YAW = Math.atan2(4.8, 6.8);
-const ROOM_PITCH = Math.atan2(3.2 - 1.1, Math.hypot(4.8, 6.8));
+const ROOM_YAW = (23 * Math.PI) / 180;
+const ROOM_PITCH = (10 * Math.PI) / 180;
 
 function coordinates(cellId: string): { floor: number; col: number } {
   const cell = CELL_BY_ID[cellId];
@@ -54,9 +54,11 @@ export function frameFor(view: SectionView, cellId: string, aspect: number): Sec
 
   if (view === 'room') {
     const [x, y, z] = cellOrigin3d(cellId);
+    const viewportWidth = CELL_ROOM.W + SECTION_PITCH.x * 0.5;
+    const isClinamen = cellId === CLINAMEN_CELL;
     return {
-      target: [x, y + 1.1, z],
-      viewHeight: CELL_ROOM.H / 0.68,
+      target: [x, y + CELL_ROOM.H / 2 - (isClinamen ? 0.48 : 0), z],
+      viewHeight: isClinamen ? 4.4 : Math.max(3.15, viewportWidth / safeAspect),
       yaw: ROOM_YAW,
       pitch: ROOM_PITCH,
     };
@@ -80,8 +82,8 @@ export function frameFor(view: SectionView, cellId: string, aspect: number): Sec
     };
   }
 
-  const roofTop = FLOOR_MAX * PITCH_Y + CELL_ROOM.H + 1.55;
-  const cellarBottom = FLOOR_MIN * PITCH_Y - 0.45;
+  const roofTop = FLOOR_MAX * PITCH_Y + CELL_ROOM.H + 3.35;
+  const cellarBottom = FLOOR_MIN * PITCH_Y - 1.2;
   const viewHeight = Math.max(
     (roofTop - cellarBottom) * 1.1,
     (BUILDING_WIDTH / safeAspect) * 1.1
@@ -114,9 +116,13 @@ export function flightPath(from: string, to: string, kind: FlightKind): string[]
 export function detailTier(
   cellId: string,
   focusCellId: string,
-  visited: ReadonlySet<string>
+  visited: ReadonlySet<string>,
+  view: SectionView = 'room'
 ): DetailTier {
   if (cellId === CLINAMEN_CELL) return 'void';
+  if (view === 'building') {
+    return cellId === focusCellId ? 'room' : visited.has(cellId) ? 'painted' : 'sketch';
+  }
   const cell = coordinates(cellId);
   const focus = coordinates(focusCellId);
   if (Math.abs(cell.floor - focus.floor) <= 1 && Math.abs(cell.col - focus.col) <= 1) {

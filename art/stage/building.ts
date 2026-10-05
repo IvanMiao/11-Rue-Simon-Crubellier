@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { InkRenderer, type InkMode } from '../inkPass';
 import { knightPiece } from '../knight';
-import { HOUR_LIGHT, LIGHT_2000, PALETTE, TYPE } from '../palette';
+import { CHARCOAL, HOUR_LIGHT, LIGHT_2000, PALETTE, TYPE } from '../palette';
+import { toonMaterial } from '../materials';
 import { CELLS, CELL_BY_ID } from '../../world/damier';
 import { buildCellRoom } from './cellRooms';
 import { buildBuildingSection } from './buildingSection';
-import { CELL_ROOM, cellScene, anchorFor } from './cellScenes';
+import { CELL_ROOM, PLAYER_SPOT, cellScene, anchorFor } from './cellScenes';
 import { createFlatsAtlas } from './flatsAtlas';
 import { disposeGroup } from './dispose';
 import {
@@ -102,6 +103,62 @@ const statusGlyph: Partial<Record<StageHotspot['status'], string>> = {
 const VIEW_ORDER: SectionView[] = ['room', 'block', 'building'];
 const FRONT_Z = 2.16;
 const MAX_ROOMS = 12;
+const sketchPaperMaterial = toonMaterial(PALETTE.linen);
+sketchPaperMaterial.userData.shared = true;
+const sketchWindowMaterial = new THREE.MeshBasicMaterial({ color: PALETTE.paper });
+sketchWindowMaterial.userData.shared = true;
+const sketchWindowLitMaterial = new THREE.MeshBasicMaterial({ color: PALETTE.light });
+sketchWindowLitMaterial.userData.shared = true;
+const sketchLampOffMaterial = new THREE.MeshBasicMaterial({ color: PALETTE.paperDeep });
+sketchLampOffMaterial.userData.shared = true;
+const sketchLampOnMaterial = new THREE.MeshBasicMaterial({ color: PALETTE.light });
+sketchLampOnMaterial.userData.shared = true;
+
+function applySketchMode(group: THREE.Group, on: boolean) {
+  if (group.userData.sketchMode === on) return;
+  group.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (!('sketchOriginalMaterial' in mesh.userData)) {
+      mesh.userData.sketchOriginalMaterial = mesh.material;
+    }
+    const original = mesh.userData.sketchOriginalMaterial as THREE.Material | THREE.Material[];
+    if (!on) {
+      mesh.material = original;
+      return;
+    }
+    if (mesh.userData.sketchLamp) {
+      mesh.material = sketchLampOffMaterial;
+      return;
+    }
+    if (mesh.userData.sketchWindow) {
+      mesh.material = sketchWindowMaterial;
+      return;
+    }
+    const figureCutout = mesh.userData.cutout as THREE.Texture | undefined;
+    const isFigure = Boolean(figureCutout || mesh.parent?.userData.sketchFigure);
+    if (!isFigure) {
+      mesh.material = sketchPaperMaterial;
+      return;
+    }
+    let silhouette = mesh.userData.sketchSilhouetteMaterial as THREE.MeshBasicMaterial | undefined;
+    if (!silhouette) {
+      const sourceMaterial = Array.isArray(original) ? original[0] : original;
+      silhouette = new THREE.MeshBasicMaterial({
+        map: figureCutout ?? null,
+        color: CHARCOAL.faint,
+        transparent: true,
+        opacity: 0.52,
+        alphaTest: figureCutout ? sourceMaterial.alphaTest || 0.25 : 0,
+        depthWrite: true,
+        side: THREE.DoubleSide,
+      });
+      mesh.userData.sketchSilhouetteMaterial = silhouette;
+    }
+    mesh.material = silhouette;
+  });
+  group.userData.sketchMode = on;
+}
 
 function toPose(
   frame: ReturnType<typeof frameFor>,
@@ -261,6 +318,8 @@ export function mountBuilding(
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NoToneMapping;
@@ -280,12 +339,15 @@ export function mountBuilding(
     visited,
     lamps,
     hour: initial.hour,
+    view: initial.view,
     builtRooms: new Set(),
   });
   root.add(atlas.mesh);
 
   const sun = new THREE.DirectionalLight(LIGHT_2000.sunColor, LIGHT_2000.sunIntensity);
   sun.castShadow = true;
+  sun.shadow.autoUpdate = false;
+  sun.shadow.needsUpdate = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.left = -14;
   sun.shadow.camera.right = 14;
@@ -332,8 +394,7 @@ export function mountBuilding(
   let frame = 0;
   let hoverCell: string | null = null;
   let hoveredHotspot: THREE.Sprite | null = null;
-  let pendant: THREE.PointLight | null = null;
-  let pendantCell: string | null = null;
+  const lampLights = new Map<string, THREE.PointLight>();
   let lastMoveObject = initial.lastMove;
   let requestedView = initial.view;
   let suppressClickUntil = 0;
@@ -384,26 +445,43 @@ export function mountBuilding(
   }
 
   function setKnightCell(cellId: string) {
-    const [x, y] = cellOrigin3d(cellId);
-    knight.position.set(x, y + 0.03, 0.34);
+    const [x, y, z] = cellOrigin3d(cellId);
+    const [spotX, spotY, spotZ] = PLAYER_SPOT[cellScene(cellId).kind];
+    knight.position.set(x + spotX, y + spotY + 0.03, z + spotZ);
   }
 
-  function setPendant() {
-    if (currentInput.hour === 23 && pendant && pendantCell === currentInput.current) return;
-    if (pendant) {
-      scene.remove(pendant);
-      pendant = null;
-      pendantCell = null;
+  function updateLampLights(input: BuildingInput) {
+    const litCells = new Set(input.hour >= 22 ? input.lamps : []);
+    if (input.hour === 23) litCells.add(input.current);
+    for (const [cellId, pointLight] of lampLights) {
+      if (litCells.has(cellId) && rooms.get(cellId)?.group.visible) continue;
+      scene.remove(pointLight);
+      lampLights.delete(cellId);
     }
-    if (currentInput.hour !== 23) return;
-    const [x, y, z] = cellOrigin3d(currentInput.current);
-    pendant = new THREE.PointLight(PALETTE.light, 2.4, 5.2);
-    pendant.position.set(x, y + 2.35, z + 0.1);
-    pendantCell = currentInput.current;
-    scene.add(pendant);
+    for (const cellId of litCells) {
+      const entry = rooms.get(cellId);
+      if (!entry?.group.visible || !entry.group.userData.hasPendant || lampLights.has(cellId)) continue;
+      const [x, y, z] = cellOrigin3d(cellId);
+      const pointLight = new THREE.PointLight(PALETTE.light, 1.8, 5.2);
+      pointLight.position.set(x, y + 2.45, z);
+      lampLights.set(cellId, pointLight);
+      scene.add(pointLight);
+    }
+    for (const [cellId, entry] of rooms) {
+      const lit =
+        input.hour >= 22 &&
+        (input.lamps.includes(cellId) || (input.hour === 23 && input.current === cellId));
+      const bulb = entry.group.getObjectByName('pendant-bulb') as THREE.Mesh | undefined;
+      if (entry.group.userData.sketchMode && bulb) {
+        bulb.material = lit ? sketchLampOnMaterial : sketchLampOffMaterial;
+        continue;
+      }
+      const material = bulb?.material as THREE.MeshBasicMaterial | undefined;
+      material?.color.set(lit ? PALETTE.light : PALETTE.paperDeep);
+    }
   }
 
-  function updateLighting(input: BuildingInput) {
+  function updateLighting(input: BuildingInput, shadowChanged = false) {
     const light = HOUR_LIGHT[input.hour];
     const angle = ((light.angle - 112) * Math.PI) / 180;
     const direction = new THREE.Vector3(...LIGHT_2000.sunDir);
@@ -413,27 +491,42 @@ export function mountBuilding(
     sun.position.copy(sun.target.position).addScaledVector(direction, -60);
     sun.color.set(light.tint);
     sun.intensity = LIGHT_2000.sunIntensity * (1 - light.night * 1.5);
-    hemi.intensity = LIGHT_2000.hemiIntensity * (1 - light.night);
-    hemi.color.set(light.night > 0.3 ? PALETTE.roof : LIGHT_2000.hemiSky);
-    for (const entry of rooms.values()) {
+    hemi.intensity = Math.max(1.08, LIGHT_2000.hemiIntensity * (1 - light.night * 0.35));
+    hemi.color.set(light.night > 0.3 ? PALETTE.linen : LIGHT_2000.hemiSky);
+    for (const [cellId, entry] of rooms) {
       const sky = entry.group.userData.windowMaterial as THREE.MeshBasicMaterial | undefined;
-      sky?.color.set(input.hour === 23 ? PALETTE.roof : light.tint);
+      const lit =
+        input.hour >= 22 &&
+        (input.lamps.includes(cellId) || (input.hour === 23 && input.current === cellId));
+      sky?.color.set(lit ? PALETTE.light : light.tint);
+      if (entry.group.userData.sketchMode) {
+        entry.group.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (mesh.isMesh && mesh.userData.sketchWindow) {
+            mesh.material = lit ? sketchWindowLitMaterial : sketchWindowMaterial;
+          }
+        });
+      }
     }
     const currentCell = CELL_BY_ID[input.current];
     if (currentCell) {
       section.elevatorNeedle.position.y = currentCell.floor * SECTION_PITCH.y + 1.3;
     }
-    setPendant();
+    updateLampLights(input);
     const shadowSpan = 3 * Math.max(SECTION_PITCH.x, SECTION_PITCH.y);
     sun.shadow.camera.left = -shadowSpan / 2;
     sun.shadow.camera.right = shadowSpan / 2;
     sun.shadow.camera.top = shadowSpan / 2;
     sun.shadow.camera.bottom = -shadowSpan / 2;
     sun.shadow.camera.updateProjectionMatrix();
+    if (shadowChanged) {
+      renderer.shadowMap.needsUpdate = true;
+      sun.shadow.needsUpdate = true;
+    }
   }
 
   function builtRoomIds(): Set<string> {
-    return new Set(rooms.keys());
+    return new Set([...rooms].filter(([, entry]) => entry.group.visible).map(([id]) => id));
   }
 
   function refreshAtlas() {
@@ -442,6 +535,7 @@ export function mountBuilding(
       visited: new Set(currentInput.visited),
       lamps: new Set(currentInput.lamps),
       hour: currentInput.hour,
+      view: currentInput.view,
       builtRooms: builtRoomIds(),
     });
   }
@@ -452,14 +546,21 @@ export function mountBuilding(
     roomsRoot.remove(entry.group);
     disposeGroupContents(entry.group);
     rooms.delete(cellId);
+    renderer.shadowMap.needsUpdate = true;
+    sun.shadow.needsUpdate = true;
+    updateLampLights(currentInput);
     refreshAtlas();
   }
 
   function updateRoomDemand(input: BuildingInput) {
     const visitedSet = new Set(input.visited);
     desiredRooms = new Set(
-      SECTION_CELL_IDS.filter((id) => detailTier(id, input.focus, visitedSet) === 'room')
+      SECTION_CELL_IDS.filter((id) => detailTier(id, input.focus, visitedSet, input.view) === 'room')
     );
+    for (const [id, entry] of rooms) {
+      entry.group.visible = desiredRooms.has(id);
+      applySketchMode(entry.group, id !== input.current && !visitedSet.has(id));
+    }
     for (const id of desiredRooms) {
       const entry = rooms.get(id);
       if (entry) {
@@ -483,11 +584,15 @@ export function mountBuilding(
     const group = buildCellRoom(cellScene(cellId), cellId);
     const [x, y, z] = cellOrigin3d(cellId);
     group.position.set(x, y, z);
+    group.visible = desiredRooms.has(cellId);
+    applySketchMode(group, cellId !== currentInput.current && !currentInput.visited.includes(cellId));
     roomsRoot.add(group);
     rooms.set(cellId, { group });
     lastRoomBuildMs = performance.now() - started;
     roomBuildMs += lastRoomBuildMs;
     roomsBuilt += 1;
+    renderer.shadowMap.needsUpdate = true;
+    sun.shadow.needsUpdate = true;
     refreshAtlas();
     updateLighting(currentInput);
   }
@@ -551,10 +656,16 @@ export function mountBuilding(
 
       const startId = flight.path[segment];
       const endId = flight.path[segment + 1];
-      const [x1, y1] = cellOrigin3d(startId);
-      const [x2, y2] = cellOrigin3d(endId);
+      const [x1, y1, z1] = cellOrigin3d(startId);
+      const [x2, y2, z2] = cellOrigin3d(endId);
+      const [sx1, sy1, sz1] = PLAYER_SPOT[cellScene(startId).kind];
+      const [sx2, sy2, sz2] = PLAYER_SPOT[cellScene(endId).kind];
       const hop = Math.sin(Math.PI * segmentT) * 0.52;
-      knight.position.set(x1 + (x2 - x1) * eased, y1 + (y2 - y1) * eased + hop + 0.03, 0.34);
+      knight.position.set(
+        x1 + sx1 + (x2 + sx2 - x1 - sx1) * eased,
+        y1 + sy1 + (y2 + sy2 - y1 - sy1) * eased + hop + 0.03,
+        z1 + sz1 + (z2 + sz2 - z1 - sz1) * eased
+      );
 
       if (progress >= 1) {
         cameraFlight = null;
@@ -818,15 +929,18 @@ export function mountBuilding(
     ink.setMode(input.mode as InkMode);
     const visitedChanged = JSON.stringify(previous.visited) !== JSON.stringify(input.visited);
     const lampsChanged = JSON.stringify(previous.lamps) !== JSON.stringify(input.lamps);
-    const demandChanged = previous.focus !== input.focus || visitedChanged;
-    if (demandChanged) updateRoomDemand(input);
-    if (demandChanged || lampsChanged || previous.hour !== input.hour) refreshAtlas();
-    if (
+    const demandChanged =
       previous.focus !== input.focus ||
       previous.current !== input.current ||
-      previous.hour !== input.hour
-    ) {
-      updateLighting(input);
+      previous.view !== input.view ||
+      visitedChanged;
+    if (demandChanged) updateRoomDemand(input);
+    if (demandChanged || lampsChanged || previous.hour !== input.hour) refreshAtlas();
+    if (demandChanged || lampsChanged || previous.hour !== input.hour) {
+      updateLighting(
+        input,
+        demandChanged || previous.hour !== input.hour || previous.focus !== input.focus
+      );
     }
     if (previous.current !== input.current && input.lastMove === null) setKnightCell(input.current);
     if (animate) addCameraTween(frameForCell(input.view, input.focus));
@@ -835,7 +949,7 @@ export function mountBuilding(
   refreshHotspots(initial);
   refreshMoveTags(initial);
   refreshChangedTags(initial);
-  updateLighting(initial);
+  updateLighting(initial, true);
   updateRoomDemand(initial);
   refreshAtlas();
   ink.setMode(initial.mode);
@@ -881,7 +995,6 @@ export function mountBuilding(
       const tagsChanged =
         JSON.stringify(input.targets) !== JSON.stringify(old.targets) ||
         JSON.stringify(input.changed) !== JSON.stringify(old.changed);
-      currentInput = input;
       requestedView = input.view;
       if (movementStarted) {
         lastMoveObject = input.lastMove;

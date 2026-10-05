@@ -7,11 +7,20 @@ export function disposeGroup(group: THREE.Group): void {
   group.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (mesh.geometry) geometries.add(mesh.geometry);
-    const list = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    const list = [
+      ...(Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []),
+      ...(Array.isArray(mesh.userData.sketchOriginalMaterial)
+        ? mesh.userData.sketchOriginalMaterial
+        : mesh.userData.sketchOriginalMaterial
+          ? [mesh.userData.sketchOriginalMaterial]
+          : []),
+      ...(mesh.userData.sketchSilhouetteMaterial ? [mesh.userData.sketchSilhouetteMaterial] : []),
+    ] as THREE.Material[];
     for (const material of list) {
+      if (material.userData.shared) continue;
       materials.add(material);
       for (const value of Object.values(material)) {
-        if (value instanceof THREE.Texture) textures.add(value);
+        if (value instanceof THREE.Texture && !value.userData.shared) textures.add(value);
       }
     }
   });

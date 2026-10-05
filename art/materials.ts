@@ -13,6 +13,7 @@ export function toonGradient(): THREE.DataTexture {
   });
   gradient = new THREE.DataTexture(data, TOON_STEPS.length, 1, THREE.RGBAFormat);
   gradient.minFilter = gradient.magFilter = THREE.NearestFilter;
+  gradient.userData.shared = true;
   gradient.needsUpdate = true;
   return gradient;
 }

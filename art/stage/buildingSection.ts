@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { drawDamier, damierSize } from '../draw/damier';
 import { PALETTE } from '../palette';
-import { CELLS, CLINAMEN_CELL } from '../../world/damier';
+import { CELL_BY_ID, CELLS, CLINAMEN_CELL } from '../../world/damier';
 import { toonMaterial } from '../materials';
 import { CELL_ROOM } from './cellScenes';
 import { cellOrigin3d, SECTION_PITCH } from './sectionLayout';
@@ -68,6 +68,90 @@ function addBackdrop(parent: THREE.Group) {
   parent.add(plane);
 }
 
+function shaftColumnsAt(boundaryFloor: number): number[] {
+  return [6, 7].filter((col) => {
+    const upper = CELL_BY_ID[`${boundaryFloor}:${col}`];
+    const lower = CELL_BY_ID[`${boundaryFloor - 1}:${col}`];
+    const isShaft = (cell: (typeof CELLS)[number] | undefined) =>
+      cell?.apartmentId === 'STAIRS' || cell?.id === '0:7' || cell?.id === '-1:7';
+    return isShaft(upper) || isShaft(lower);
+  });
+}
+
+function addFloorSpans(specs: BoxSpec[], floor: number, h: number, d: number, z: number, y: number) {
+  const left = -BUILDING_WIDTH / 2 - 0.125;
+  const right = BUILDING_WIDTH / 2 + 0.125;
+  let cursor = left;
+  for (const col of shaftColumnsAt(floor)) {
+    const center = (col - 5.5) * SECTION_PITCH.x;
+    const start = center - SECTION_PITCH.x / 2;
+    const end = center + SECTION_PITCH.x / 2;
+    if (start > cursor) specs.push({ w: start - cursor, h, d, x: (start + cursor) / 2, y, z });
+    cursor = Math.max(cursor, end);
+  }
+  if (cursor < right) specs.push({ w: right - cursor, h, d, x: (right + cursor) / 2, y, z });
+}
+
+function addDormer(parent: THREE.Group, x: number, baseY: number) {
+  const dormer = new THREE.Group();
+  dormer.name = 'mansard-dormer';
+  const front = FRONT_Z + 0.02;
+  const cheek = new THREE.Mesh(
+    new THREE.BoxGeometry(0.16, 1.06, 0.72),
+    toonMaterial(PALETTE.plaster)
+  );
+  cheek.position.set(-0.67, baseY + 0.73, front - 0.04);
+  const cheekRight = cheek.clone();
+  cheekRight.position.x = 0.67;
+  dormer.add(cheek, cheekRight);
+
+  const window = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.06, 0.72),
+    new THREE.MeshBasicMaterial({ color: PALETTE.skyWarm })
+  );
+  window.position.set(0, baseY + 0.78, front + 0.08);
+  window.userData.noInk = true;
+  dormer.add(window);
+  const frameBars: BoxSpec[] = [
+    { w: 1.18, h: 0.09, d: 0.1, x: 0, y: baseY + 1.16, z: front + 0.12 },
+    { w: 1.18, h: 0.09, d: 0.1, x: 0, y: baseY + 0.4, z: front + 0.12 },
+    { w: 0.09, h: 0.84, d: 0.1, x: -0.55, y: baseY + 0.78, z: front + 0.12 },
+    { w: 0.09, h: 0.84, d: 0.1, x: 0.55, y: baseY + 0.78, z: front + 0.12 },
+    { w: 0.055, h: 0.72, d: 0.08, x: 0, y: baseY + 0.78, z: front + 0.16 },
+    { w: 1.06, h: 0.055, d: 0.08, x: 0, y: baseY + 0.78, z: front + 0.16 },
+  ];
+  mergedBoxes(dormer, frameBars, PALETTE.linen);
+
+  const roofShape = new THREE.Shape();
+  roofShape.moveTo(-0.9, baseY + 1.2);
+  roofShape.lineTo(-0.68, baseY + 1.72);
+  roofShape.lineTo(0.68, baseY + 1.72);
+  roofShape.lineTo(0.9, baseY + 1.2);
+  roofShape.closePath();
+  const roof = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(roofShape, { depth: 0.78, bevelEnabled: false }),
+    toonMaterial(PALETTE.roof)
+  );
+  roof.position.z = front - 0.42;
+  roof.castShadow = true;
+  dormer.add(roof);
+  const roofSeams: BoxSpec[] = [];
+  for (const seamX of [-0.45, -0.15, 0.15, 0.45]) {
+    roofSeams.push({
+      w: 0.025,
+      h: 0.54,
+      d: 0.035,
+      x: seamX,
+      y: baseY + 1.46,
+      z: front + 0.04,
+      rotationZ: seamX < 0 ? -0.38 : 0.38,
+    });
+  }
+  mergedBoxes(dormer, roofSeams, PALETTE.paperDeep, true);
+  dormer.position.x = x;
+  parent.add(dormer);
+}
+
 function addRoof(parent: THREE.Group) {
   const left = -BUILDING_WIDTH / 2;
   const right = BUILDING_WIDTH / 2;
@@ -89,28 +173,111 @@ function addRoof(parent: THREE.Group) {
   roof.receiveShadow = true;
   parent.add(roof);
 
-  const dormers: BoxSpec[] = [];
-  const dormerWindows: BoxSpec[] = [];
-  for (const x of [-12.3, -6.15, 0, 6.15, 12.3]) {
-    dormers.push(
-      { w: 1.35, h: 1.08, d: 0.25, x, y: baseY + 0.82, z: FRONT_Z - 0.02 },
-      { w: 1.6, h: 0.14, d: 0.42, x, y: baseY + 1.38, z: FRONT_Z - 0.02 }
-    );
-    dormerWindows.push(
-      { w: 0.76, h: 0.56, d: 0.04, x, y: baseY + 0.83, z: FRONT_Z + 0.14 }
-    );
+  for (const x of [-12.3, -6.15, 0, 6.15, 12.3]) addDormer(parent, x, baseY);
+
+  const cornice: BoxSpec[] = [
+    { w: BUILDING_WIDTH + 0.9, h: 0.2, d: 0.5, x: 0, y: baseY + 0.02, z: FRONT_Z + 0.02 },
+    { w: BUILDING_WIDTH + 0.45, h: 0.12, d: 0.38, x: 0, y: baseY + 0.2, z: FRONT_Z + 0.03 },
+  ];
+  mergedBoxes(parent, cornice, PALETTE.castWallStone);
+
+  const seams: BoxSpec[] = [];
+  for (let x = left + 1.65; x <= right - 1.65; x += 0.76) {
+    seams.push({
+      w: 0.028,
+      h: 1.22,
+      d: 0.035,
+      x,
+      y: baseY + 0.97,
+      z: FRONT_Z + 0.035,
+    });
   }
-  mergedBoxes(parent, dormers, PALETTE.roof);
-  mergedBoxes(parent, dormerWindows, PALETTE.linen, true);
+  mergedBoxes(parent, seams, PALETTE.paperDeep, true);
 
   const chimneys: BoxSpec[] = [];
+  const pots: THREE.BufferGeometry[] = [];
   for (const x of [-15.7, -8.1, 8.1, 15.7]) {
     chimneys.push(
       { w: 0.42, h: 1.5, d: 0.48, x, y: baseY + 1.9, z: -0.55 },
       { w: 0.62, h: 0.16, d: 0.58, x, y: baseY + 2.68, z: -0.55 }
     );
+    for (const dx of [-0.14, 0.14]) {
+      const pot = new THREE.CylinderGeometry(0.09, 0.12, 0.48, 8);
+      pot.translate(x + dx, baseY + 2.98, -0.55);
+      pots.push(pot);
+    }
   }
   mergedBoxes(parent, chimneys, PALETTE.woodDark);
+  const potGeometry = mergeGeometries(pots);
+  pots.forEach((pot) => pot.dispose());
+  if (potGeometry) {
+    const potMesh = new THREE.Mesh(potGeometry, toonMaterial(PALETTE.castWallStone));
+    potMesh.castShadow = true;
+    parent.add(potMesh);
+  }
+}
+
+function addStreet(parent: THREE.Group) {
+  const hallCell = CELL_BY_ID['0:6'] ?? CELL_BY_ID['0:7'];
+  const hallX = hallCell ? cellOrigin3d(hallCell.id)[0] : 0;
+  const front = FRONT_Z;
+  const porch: BoxSpec[] = [
+    { w: 6.1, h: 0.2, d: 1.55, x: hallX + 1.76, y: 3.05, z: front + 0.8 },
+    { w: 0.18, h: 2.9, d: 0.18, x: hallX - 0.7, y: 1.45, z: front + 0.85 },
+    { w: 0.18, h: 2.9, d: 0.18, x: hallX + 4.22, y: 1.45, z: front + 0.85 },
+    { w: 1.42, h: 2.42, d: 0.09, x: hallX + 1.76, y: 1.21, z: front + 0.1 },
+    { w: 0.08, h: 2.3, d: 0.12, x: hallX + 1.76, y: 1.21, z: front + 0.17 },
+    { w: 1.1, h: 0.08, d: 0.12, x: hallX + 1.76, y: 1.22, z: front + 0.17 },
+  ];
+  mergedBoxes(parent, porch.slice(0, 3), PALETTE.castWallStone);
+  mergedBoxes(parent, porch.slice(3), PALETTE.woodDark);
+  const doorPanels: BoxSpec[] = [
+    { w: 0.44, h: 0.68, d: 0.035, x: hallX + 1.47, y: 0.56, z: front + 0.24 },
+    { w: 0.44, h: 0.68, d: 0.035, x: hallX + 2.05, y: 0.56, z: front + 0.24 },
+    { w: 0.44, h: 0.8, d: 0.035, x: hallX + 1.47, y: 1.57, z: front + 0.24 },
+    { w: 0.44, h: 0.8, d: 0.035, x: hallX + 2.05, y: 1.57, z: front + 0.24 },
+  ];
+  mergedBoxes(parent, doorPanels, PALETTE.wood);
+
+  const lamp = new THREE.Group();
+  const post = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045, 0.07, 3.1, 8),
+    toonMaterial(PALETTE.woodDark)
+  );
+  post.position.set(hallX + 5.25, 1.55, front + 1.55);
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.48, 0.34),
+    toonMaterial(PALETTE.brass)
+  );
+  head.position.set(hallX + 5.25, 3.18, front + 1.55);
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 10, 8),
+    new THREE.MeshBasicMaterial({ color: PALETTE.light })
+  );
+  glow.position.set(hallX + 5.25, 3.12, front + 1.55);
+  glow.userData.noInk = true;
+  lamp.add(post, head, glow);
+  parent.add(lamp);
+
+  const sidewalks: BoxSpec[] = [];
+  const kerbs: BoxSpec[] = [];
+  for (const side of [-1, 1]) {
+    const sidewalkX = side * (BUILDING_WIDTH / 2 + 1.65);
+    sidewalks.push(
+      { w: 3.3, h: 0.12, d: 2.1, x: sidewalkX, y: -0.2, z: front + 0.95 },
+      { w: 3.3, h: 0.14, d: 0.18, x: sidewalkX, y: -0.08, z: front + 2.0 }
+    );
+    kerbs.push({
+      w: 3.3,
+      h: 0.08,
+      d: 0.16,
+      x: sidewalkX,
+      y: -0.02,
+      z: front + 0.05,
+    });
+  }
+  mergedBoxes(parent, sidewalks, PALETTE.paperDeep);
+  mergedBoxes(parent, kerbs, PALETTE.castWallStone);
 }
 
 function addClinamen(parent: THREE.Group) {
@@ -178,24 +345,66 @@ export function buildBuildingSection(): BuildingSection {
   const floorCuts: BoxSpec[] = [];
   for (let floor = -1; floor <= 8; floor += 1) {
     const y = floor * SECTION_PITCH.y;
-    slabs.push({ w: BUILDING_WIDTH + 0.25, h: 0.24, d: 0.2, x: 0, y: y - 0.12, z: FRONT_Z + 0.08 });
-    floorCuts.push({ w: BUILDING_WIDTH + 0.25, h: 0.025, d: 0.035, x: 0, y: y - 0.12, z: FRONT_Z + 0.2 });
+    addFloorSpans(slabs, floor, 0.24, 0.2, FRONT_Z + 0.08, y - 0.12);
+    addFloorSpans(floorCuts, floor, 0.025, 0.035, FRONT_Z + 0.2, y - 0.12);
   }
   mergedBoxes(group, slabs, PALETTE.paperDeep);
   mergedBoxes(group, floorCuts, PALETTE.ink, true);
 
   const partyWalls: BoxSpec[] = [];
   const partyCuts: BoxSpec[] = [];
+  const partitionTrim: BoxSpec[] = [];
   for (let floor = -1; floor <= 8; floor += 1) {
     const y = floor * SECTION_PITCH.y;
     for (let boundary = 0; boundary <= 10; boundary += 1) {
       const x = (boundary - 5) * SECTION_PITCH.x;
-      partyWalls.push({ w: 0.12, h: CELL_ROOM.H, d: CELL_ROOM.D, x, y: y + CELL_ROOM.H / 2, z: 0 });
-      partyCuts.push({ w: 0.026, h: CELL_ROOM.H, d: 0.028, x, y: y + CELL_ROOM.H / 2, z: FRONT_Z + 0.05 });
+      const left = boundary > 0 ? CELL_BY_ID[`${floor}:${boundary}`] : undefined;
+      const right = boundary < 10 ? CELL_BY_ID[`${floor}:${boundary + 1}`] : undefined;
+      const sameApartment = Boolean(left && right && left.apartmentId === right.apartmentId);
+      if (!sameApartment) {
+        partyWalls.push({ w: 0.12, h: CELL_ROOM.H, d: CELL_ROOM.D, x, y: y + CELL_ROOM.H / 2, z: 0 });
+        partyCuts.push({ w: 0.026, h: CELL_ROOM.H, d: 0.028, x, y: y + CELL_ROOM.H / 2, z: FRONT_Z + 0.05 });
+        continue;
+      }
+
+      const doorZ = 1.12;
+      const doorWidth = 0.96;
+      const doorHeight = 2.12;
+      const doorStart = doorZ - doorWidth / 2;
+      const doorEnd = doorZ + doorWidth / 2;
+      for (const [start, end] of [[-CELL_ROOM.D / 2, doorStart], [doorEnd, CELL_ROOM.D / 2]] as const) {
+        if (end - start < 0.02) continue;
+        partyWalls.push({
+          w: 0.08,
+          h: CELL_ROOM.H,
+          d: end - start,
+          x,
+          y: y + CELL_ROOM.H / 2,
+          z: (start + end) / 2,
+        });
+      }
+      partyWalls.push({
+        w: 0.08,
+        h: CELL_ROOM.H - doorHeight,
+        d: doorWidth,
+        x,
+        y: y + doorHeight + (CELL_ROOM.H - doorHeight) / 2,
+        z: doorZ,
+      });
+      partitionTrim.push(
+        { w: 0.06, h: doorHeight, d: 0.045, x, y: y + doorHeight / 2, z: doorStart },
+        { w: 0.06, h: doorHeight, d: 0.045, x, y: y + doorHeight / 2, z: doorEnd },
+        { w: 0.06, h: 0.07, d: doorWidth + 0.08, x, y: y + doorHeight, z: doorZ }
+      );
+      partyCuts.push(
+        { w: 0.026, h: doorHeight, d: 0.028, x, y: y + doorHeight / 2, z: doorStart },
+        { w: 0.026, h: doorHeight, d: 0.028, x, y: y + doorHeight / 2, z: doorEnd }
+      );
     }
   }
   mergedBoxes(group, partyWalls, PALETTE.plaster);
   mergedBoxes(group, partyCuts, PALETTE.ink, true);
+  mergedBoxes(group, partitionTrim, PALETTE.woodDark);
 
   const pilasters: BoxSpec[] = [];
   for (const x of [-BUILDING_WIDTH / 2, BUILDING_WIDTH / 2]) {
@@ -229,21 +438,25 @@ export function buildBuildingSection(): BuildingSection {
           z: -0.86 + step * 0.17,
         });
       }
-      stairRails.push(
-        { w: 0.055, h: 1.8, d: 0.055, x: stairX - 1.2, y: y + 1.32, z: -0.63 },
-        { w: 0.055, h: 1.8, d: 0.055, x: stairX + 1.2, y: y + 1.32, z: -0.63 }
-      );
     }
+    stairRails.push(
+      { w: 0.055, h: 19.2, d: 0.055, x: stairX - 1.2, y: 12.84, z: -0.63 },
+      { w: 0.055, h: 19.2, d: 0.055, x: stairX + 1.2, y: 12.84, z: -0.63 }
+    );
   }
   mergedBoxes(group, stairTreads, PALETTE.wood);
   mergedBoxes(group, stairRails, PALETTE.brass);
 
   const liftCell = CELLS.find((cell) => cell.apartmentId === 'STAIRS' && cell.col === 7);
   const liftX = liftCell ? cellOrigin3d(liftCell.id)[0] : cellOrigin3d('0:7')[0];
+  const liftBottom = -SECTION_PITCH.y;
+  const liftTop = 8 * SECTION_PITCH.y + CELL_ROOM.H;
+  const liftHeight = liftTop - liftBottom;
+  const liftCenter = (liftTop + liftBottom) / 2;
   const liftRails: BoxSpec[] = [
-    { w: 0.07, h: 23, d: 0.07, x: liftX - 0.52, y: 8, z: -0.96 },
-    { w: 0.07, h: 23, d: 0.07, x: liftX + 0.52, y: 8, z: -0.96 },
-    { w: 0.04, h: 23, d: 0.04, x: liftX, y: 8, z: -1.06 },
+    { w: 0.07, h: liftHeight, d: 0.07, x: liftX - 0.52, y: liftCenter, z: -0.96 },
+    { w: 0.07, h: liftHeight, d: 0.07, x: liftX + 0.52, y: liftCenter, z: -0.96 },
+    { w: 0.04, h: liftHeight, d: 0.04, x: liftX, y: liftCenter, z: -1.06 },
   ];
   mergedBoxes(group, liftRails, PALETTE.woodDark);
   const elevatorNeedle = new THREE.Mesh(
@@ -256,16 +469,28 @@ export function buildBuildingSection(): BuildingSection {
   group.add(elevatorNeedle);
 
   addRoof(group);
+  addStreet(group);
   const pavement = [
     { w: BUILDING_WIDTH + 1.2, h: 0.16, d: 1.1, x: 0, y: -0.31, z: FRONT_Z + 0.5 },
     { w: BUILDING_WIDTH + 1.2, h: 0.035, d: 1.14, x: 0, y: -0.22, z: FRONT_Z + 0.5 },
   ];
   mergedBoxes(group, pavement, PALETTE.paperDeep);
   const earth: BoxSpec[] = [
-    { w: BUILDING_WIDTH + 0.4, h: 1.1, d: 0.13, x: 0, y: -3.82, z: FRONT_Z + 0.12 },
+    { w: BUILDING_WIDTH + 4.6, h: 1.1, d: 0.13, x: 0, y: -3.82, z: FRONT_Z + 0.12 },
   ];
+  const foundationLines: BoxSpec[] = [];
+  for (let x = -BUILDING_WIDTH / 2 - 2.2; x < BUILDING_WIDTH / 2 + 2.2; x += 1.2) {
+    foundationLines.push({
+      w: 0.035,
+      h: 1.08,
+      d: 0.035,
+      x,
+      y: -3.82,
+      z: FRONT_Z + 0.2,
+    });
+  }
   const hatch: BoxSpec[] = [];
-  for (let x = -BUILDING_WIDTH / 2 - 0.2; x < BUILDING_WIDTH / 2; x += 0.7) {
+  for (let x = -BUILDING_WIDTH / 2 - 2.2; x < BUILDING_WIDTH / 2 + 2.2; x += 0.7) {
     hatch.push({
       w: 0.035,
       h: 1.25,
@@ -276,8 +501,9 @@ export function buildBuildingSection(): BuildingSection {
       rotationZ: 0.42,
     });
   }
-  mergedBoxes(group, earth, PALETTE.woodDark);
-  mergedBoxes(group, hatch, PALETTE.ink, true);
+  mergedBoxes(group, earth, PALETTE.castWallStone);
+  mergedBoxes(group, foundationLines, PALETTE.castFloorTaupe, true);
+  mergedBoxes(group, hatch, PALETTE.castFloorTaupe, true);
   addClinamen(group);
 
   return { group, elevatorNeedle };

@@ -5,11 +5,11 @@ import { armchair, bentwoodChair, boiler, coalPile, dustSheet, shopCounter, stac
 import { figureCanvas, paperCutout } from '../figures';
 import { drawDamier } from '../draw/damier';
 import { drawBust } from '../draw/people';
-import { CELL_ROOM, type CellScene } from './cellScenes';
+import { CELL_ROOM, cellScene, type CellScene } from './cellScenes';
 import { canvas, harbourTexture, texture } from '../textures';
 import { knightPiece } from '../knight';
 import { toonMaterial, sectionBox } from '../materials';
-import { CELLS, CLINAMEN_CELL } from '../../world/damier';
+import { CELL_BY_ID, CELLS, CLINAMEN_CELL } from '../../world/damier';
 
 function box(
   parent: THREE.Object3D,
@@ -104,6 +104,7 @@ function wallPanel(g: THREE.Group, scene: CellScene, wall: THREE.Texture) {
   const pane = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0 - 0.06, y1 - y0 - 0.06), sky);
   pane.position.set((x0 + x1) / 2, (y0 + y1) / 2, wallZ + 0.04);
   pane.userData.noInk = true;
+  pane.userData.sketchWindow = true;
   g.add(pane);
 
   const frame = PALETTE.linen;
@@ -125,8 +126,10 @@ function pendant(g: THREE.Group) {
   shade.castShadow = true;
   g.add(shade);
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshBasicMaterial({ color: PALETTE.light }));
+  bulb.name = 'pendant-bulb';
   bulb.position.set(0, 2.48, 0);
   bulb.userData.noInk = true;
+  bulb.userData.sketchLamp = true;
   g.add(bulb);
 }
 
@@ -229,6 +232,7 @@ function residentFigure(g: THREE.Group, scene: CellScene, x: number, z: number, 
   if (!scene.resident) return;
   const member = CAST[scene.resident];
   const f = paperCutout(figureCanvas(member), height, { mirror: scene.kind === 'atelier' });
+  f.userData.sketchFigure = true;
   f.position.set(x, 0, z);
   f.rotation.y = scene.kind === 'atelier' ? 0.12 : -0.08;
   g.add(f);
@@ -403,7 +407,7 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       residentFigure(g, scene, 0.58, -0.12, 1.85);
       break;
     case 'atelier': {
-      floorRug(g, TONES.navy, 0.22, 0.26);
+      floorRug(g, PALETTE.washNavy, 0.22, 0.26);
       const chair = bentwoodChair({ color: PALETTE.woodDark });
       chair.position.set(0.76, 0, 0.45);
       chair.rotation.y = -0.2;
@@ -554,6 +558,38 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
 
 }
 
+function sidePartition(group: THREE.Group, side: -1 | 1, sameApartment: boolean) {
+  const { W, H, D } = CELL_ROOM;
+  const x = side * (W / 2);
+  if (!sameApartment) {
+    const wall = sectionBox(0.12, H, D, toonMaterial(cellScene(group.userData.cellId).wall));
+    wall.position.set(x, H / 2, 0);
+    group.add(wall);
+    return;
+  }
+
+  const thickness = 0.08;
+  const doorZ = 1.12;
+  const doorWidth = 0.96;
+  const doorHeight = 2.12;
+  const doorStart = doorZ - doorWidth / 2;
+  const doorEnd = doorZ + doorWidth / 2;
+  for (const [start, end] of [[-D / 2, doorStart], [doorEnd, D / 2]] as const) {
+    const depth = end - start;
+    if (depth < 0.02) continue;
+    const wall = sectionBox(thickness, H, depth, toonMaterial(cellScene(group.userData.cellId).wall));
+    wall.position.set(x, H / 2, (start + end) / 2);
+    group.add(wall);
+  }
+  const lintel = sectionBox(thickness, H - doorHeight, doorWidth, toonMaterial(cellScene(group.userData.cellId).wall));
+  lintel.position.set(x, doorHeight + (H - doorHeight) / 2, doorZ);
+  group.add(lintel);
+  for (const z of [doorStart, doorEnd]) {
+    box(group, 0.06, doorHeight, 0.045, PALETTE.woodDark, x, doorHeight / 2, z);
+  }
+  box(group, 0.06, 0.07, doorWidth + 0.1, PALETTE.woodDark, x, doorHeight, doorZ);
+}
+
 export function buildCellRoom(scene: CellScene, cellId: string): THREE.Group {
   const group = new THREE.Group();
   group.name = `cell-room:${cellId}`;
@@ -562,14 +598,12 @@ export function buildCellRoom(scene: CellScene, cellId: string): THREE.Group {
   group.userData.hasPendant = !['sill', 'boiler', 'clinamen'].includes(scene.kind);
   const { W, H, D } = CELL_ROOM;
   const wall = wallCanvas(scene);
-  const hasWindow = !['hall', 'workshop', 'boiler', 'archive', 'clinamen'].includes(scene.kind);
-
-  for (const side of [-1, 1]) {
-    const wallMesh = sectionBox(0.12, H, D, toonMaterial(scene.wall));
-    wallMesh.position.set(side * (W / 2), H / 2, 0);
-    group.add(wallMesh);
-  }
+  const cell = CELL_BY_ID[cellId];
+  const hasWindow = cell.floor !== -1 && !['hall', 'workshop', 'boiler', 'archive', 'clinamen'].includes(scene.kind);
+  sidePartition(group, -1, CELL_BY_ID[`${cell.floor}:${cell.col - 1}`]?.apartmentId === cell.apartmentId);
+  sidePartition(group, 1, CELL_BY_ID[`${cell.floor}:${cell.col + 1}`]?.apartmentId === cell.apartmentId);
   const slab = sectionBox(W + 0.12, 0.24, D + 0.14, toonMaterial(PALETTE.floorDark));
+  slab.userData.noInk = scene.kind === 'stair' || cellId === '0:7' || cellId === '-1:7';
   slab.position.set(0, -0.12, 0);
   group.add(slab);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), toonMaterial(scene.floor));

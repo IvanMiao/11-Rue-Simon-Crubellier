@@ -81,17 +81,25 @@
   max-width: calc(100% - 1.6rem);
 }
 .building-view-tabs button {
+  position: relative;
   padding: 0.38rem 0.62rem;
-  border: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 48%, transparent);
+  border-bottom-width: 2px;
   background: var(--linen);
   color: var(--ink);
-  box-shadow: 2px 2px 0 color-mix(in srgb, var(--ink) 24%, transparent);
+  box-shadow: 2px 3px 0 color-mix(in srgb, var(--ink) 22%, transparent);
   font-family: var(--mono);
   font-size: 0.75rem;
+  transform: rotate(-0.6deg);
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
 }
+.building-view-tabs button:nth-child(even) { transform: rotate(0.5deg); }
+.building-view-tabs button:hover { transform: translateY(-1px) rotate(0deg); box-shadow: 3px 4px 0 color-mix(in srgb, var(--ink) 24%, transparent); }
 .building-view-tabs button.is-active {
-  background: var(--ink);
-  color: var(--linen);
+  background: var(--paper);
+  color: var(--ink);
+  border-bottom-color: var(--paper);
+  font-weight: 700;
 }
 .building-view-tabs button:focus-visible {
   outline: 2px solid var(--accent);
@@ -125,14 +133,17 @@
   position: absolute;
   z-index: 3;
   right: 1rem;
-  bottom: 0.8rem;
-  max-width: 42%;
-  color: var(--charcoal);
+  bottom: 0.75rem;
+  max-width: min(45%, 30rem);
+  padding: 0.42rem 0.62rem;
+  border: 1px solid color-mix(in srgb, var(--ink) 48%, transparent);
+  background: var(--linen);
+  box-shadow: 2px 3px 0 color-mix(in srgb, var(--ink) 22%, transparent);
+  color: var(--ink);
   font-family: var(--mono);
   font-size: 0.65rem;
   line-height: 1.5;
-  text-align: right;
-  text-shadow: 0 1px var(--paper);
+  text-align: left;
   pointer-events: none;
 }
 
