@@ -7,6 +7,7 @@ import { InkRenderer } from '../inkPass';
 import { configureStageCamera, STAGE_CAMERA } from './camera';
 import { buildCellRoom } from './cellRooms';
 import { cellScene } from './cellScenes';
+import { disposeGroup } from './dispose';
 
 const KIND_LABEL: Record<ReturnType<typeof cellScene>['kind'], string> = {
   stair: '楼梯',
@@ -24,27 +25,6 @@ const KIND_LABEL: Record<ReturnType<typeof cellScene>['kind'], string> = {
   clinamen: '缺掉的一格',
   empty: '空房',
 };
-
-function disposeGroup(group: THREE.Group) {
-  const geometries = new Set<THREE.BufferGeometry>();
-  const materials = new Set<THREE.Material>();
-  const textures = new Set<THREE.Texture>();
-  group.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    if (mesh.geometry) geometries.add(mesh.geometry);
-    const list = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-    for (const material of list) {
-      materials.add(material);
-      for (const value of Object.values(material)) {
-        if (value instanceof THREE.Texture) textures.add(value);
-      }
-    }
-  });
-  textures.forEach((texture) => texture.dispose());
-  materials.forEach((material) => material.dispose());
-  geometries.forEach((geometry) => geometry.dispose());
-  group.clear();
-}
 
 async function main() {
   await document.fonts.ready;

@@ -103,7 +103,13 @@ export function cellScene(cellId: string): CellScene {
   if (apartmentId === '8-2') return scene('servant', cellId, apartmentId, 'smautf');
   if (apartmentId === '7-7') return scene('studio', cellId, apartmentId, 'valene');
   if (apartmentId === '8-6') return scene('lab', cellId, apartmentId, 'morellet');
-  if (apartmentId === '-1-3') return scene('boiler', cellId, apartmentId);
+  if (apartmentId === '-1-3') {
+    return {
+      ...scene('boiler', cellId, apartmentId),
+      wall: PALETTE.castWallStone,
+      floor: PALETTE.floorDark,
+    };
+  }
   if (apartmentId === '0-3') return scene('shop', cellId, apartmentId);
   if (apartmentId === '6-1') return scene('archive', cellId, apartmentId);
   return { ...scene('empty', cellId, apartmentId), wall: PALETTE.plaster, floor: PALETTE.paperDeep };
