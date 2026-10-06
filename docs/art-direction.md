@@ -50,6 +50,13 @@ Run it: `npm run dev`, then open `/style-lab.html` (press `1` room view, `2` sec
 - Hover and drop targets use a brass silhouette rim and warm material tint rather than a debug bounds box. The player marker is hidden while a close-up is active; cell `8:7` has a separate landing spot away from the loupe.
 - Specialized mechanisms are authored for `3:6`, `3:1` and `6:8`. Generic cells still use the tag plus nearest-mesh behavior; this is the main remaining interaction-art limitation.
 
+## Resolved in S3 audio
+
+- Selected sounds are CC0, mono 44.1 kHz Ogg assets under `public/audio/`; source identity, aliases, direct URLs, license evidence, and processing are recorded in `docs/audio-provenance.md`.
+- `audio/` is a presentation-only Web Audio controller: cue variants are stable by cue/key, settings persist under `s3:audio-settings:v1`, and clock, boiler, and rain beds follow the authored cell/hour plan.
+- Fresh game events and typed building interactions drive paper, mechanism, movement, check, hour, and ending cues. Audio does not infer one-shots from loaded state.
+- The sound toggle and labelled master, ambience, and music controls sit beside the motion control. Audio remains intentionally sparse and mono; generic-cell hotspots still use the nearest-mesh interaction model rather than individually authored contact sounds.
+
 ## Known shortcomings (to address later)
 
 ### Residents (cut-out figures)
@@ -67,7 +74,7 @@ Run it: `npm run dev`, then open `/style-lab.html` (press `1` room view, `2` sec
 
 ### Lighting and rendering
 - Dust motes are fixed screen-size points (scaled by zoom); they look busy in the section view.
-- Hour light is global per hour; lamps are not yet tied to individual residents or room signals.
+- Hour light is global per hour; lamps stagger deterministically rather than responding to individual residents.
 - Ink lines come only from depth/normal breaks, so coplanar details (rug border, plank seams) rely on texture lines.
 - Screenshots were produced with software WebGL; real-GPU performance has not been profiled.
 

@@ -32,6 +32,7 @@ const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, onHandl
       .then(({ mountBuilding }) => {
         if (!active || !hostRef.current) return;
         const handle = mountBuilding(hostRef.current, inputRef.current, {
+          onAudioCue: (cue, key, delayMs) => callbacksRef.current.onAudioCue?.(cue, key, delayMs),
           onPickHotspot: (lineId) => callbacksRef.current.onPickHotspot(lineId),
           onPickCell: (cellId) => callbacksRef.current.onPickCell(cellId),
           onHoverCell: (cellId) => callbacksRef.current.onHoverCell(cellId),

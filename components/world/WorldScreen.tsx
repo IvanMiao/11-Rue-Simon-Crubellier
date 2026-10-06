@@ -21,6 +21,16 @@ import type {
 } from '../../art/stage/building';
 import { MECHANISMS } from '../../art/stage/mechanisms';
 import type { SectionView } from '../../art/stage/sectionLayout';
+import {
+  AUDIO_SETTINGS_KEY,
+  DEFAULT_AUDIO_SETTINGS,
+  parseAudioSettings,
+  serializeAudioSettings,
+  type AudioSettings,
+  type Cue,
+} from '../../audio/cues';
+import { createAudioController, type AudioController } from '../../audio/audio';
+import { cuesForGameEvents } from '../../audio/events';
 import DamierCanvas, { type Hour, type MoveTarget } from './DamierCanvas';
 import RoomPage, { type PendingLineCheck } from './RoomPage';
 import Notebook, { type Arrival } from './Notebook';
@@ -84,6 +94,14 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
       return true;
     }
   });
+  const [audioSettings, setAudioSettings] = useState<AudioSettings>(() => {
+    try {
+      return parseAudioSettings(window.localStorage.getItem(AUDIO_SETTINGS_KEY));
+    } catch {
+      return { ...DEFAULT_AUDIO_SETTINGS };
+    }
+  });
+  const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(() =>
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
@@ -97,6 +115,10 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   const [highlightedLineId, setHighlightedLineId] = useState<string | null>(null);
   const [lastMove, setLastMove] = useState<{ from: string; to: string; kind: 'walk' | 'knight' | 'elevator' } | null>(null);
   const arrivalSeq = useRef(0);
+  const audioActionSeq = useRef(0);
+  const audioRef = useRef<AudioController | null>(null);
+  const trayCueOpen = useRef(false);
+  const previousCaseOpen = useRef(isCaseOpen);
   const notebookRef = useRef<HTMLDivElement>(null);
   const buildingHandleRef = useRef<BuildingHandle | null>(null);
   const lastSourceLine = useRef<string | null>(null);
@@ -114,6 +136,54 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   const current = state.currentRoomId;
   const shownCell = viewing && state.visitedRooms[viewing] ? viewing : current;
   const playerCoatTone = coatToneFor(state.character?.archetype);
+  const onAudioCue = useCallback((cue: Cue, key = '', delayMs = 0) => {
+    audioRef.current?.play(cue, key, { delayMs });
+  }, []);
+
+  useEffect(() => {
+    const controller = createAudioController({
+      now: () => buildingHandleRef.current?.now() ?? performance.now(),
+    });
+    audioRef.current = controller;
+    const unlock = () => {
+      void controller.unlock();
+      document.removeEventListener('pointerdown', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+    };
+    document.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    document.addEventListener('keydown', unlock, true);
+    return () => {
+      document.removeEventListener('pointerdown', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+      controller.dispose();
+      audioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    audioRef.current?.setSettings(audioSettings);
+    try {
+      window.localStorage.setItem(AUDIO_SETTINGS_KEY, serializeAudioSettings(audioSettings));
+    } catch {
+      return;
+    }
+  }, [audioSettings]);
+
+  useEffect(() => {
+    audioRef.current?.setBed(
+      liveState.currentRoomId ?? '',
+      hourOf(liveState.minutesPastEight)
+    );
+  }, [liveState.currentRoomId, liveState.minutesPastEight]);
+
+  useEffect(() => {
+    if (previousCaseOpen.current === isCaseOpen) return;
+    previousCaseOpen.current = isCaseOpen;
+    const opening = isCaseOpen;
+    const key = `case-file:${liveState.runSeed}:${audioActionSeq.current}`;
+    onAudioCue(opening ? 'book.open' : 'book.close', key);
+    onAudioCue(opening ? 'map.open' : 'map.close', key, 180);
+  }, [isCaseOpen, liveState.runSeed, onAudioCue]);
 
   useEffect(() => {
     if (!toast) return;
@@ -208,6 +278,10 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     (action: Action, lineId?: string) => {
       const before = liveState;
       const events = dispatch(action);
+      const actionKey = `${liveState.runSeed}:${liveState.minutesPastEight}:${audioActionSeq.current++}`;
+      cuesForGameEvents(events, before.visitedRooms, actionKey).forEach(({ cue, key, ...options }) => {
+        audioRef.current?.play(cue, key, options);
+      });
       const rolled = events.find((e) => e.type === 'checkRolled');
       if (rolled?.type === 'checkRolled' && lineId) {
         setFrozen(before);
@@ -394,11 +468,18 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     reducedMotion,
   ]);
   const buildingCallbacks = useMemo<BuildingCallbacks>(() => ({
+    onAudioCue,
     onPickHotspot: (lineId) => {
       const line = sheet?.lines.find((candidate) => candidate.id === lineId);
-      if (!line || line.status !== 'open' || viewing || check) return;
-      if (line.kind === 'check') setArmed((active) => (active === line.id ? null : line.id));
-      else onLine(line);
+      if (!line || viewing || check) return;
+      if (line.status !== 'open') {
+        onAudioCue('lock.rattle', line.id);
+        return;
+      }
+      if (line.kind === 'check') {
+        if (armed !== line.id) onAudioCue('dice.grab', line.id);
+        setArmed(armed === line.id ? null : line.id);
+      } else onLine(line);
     },
     onPickCell: onSelectCell,
     onHoverCell: () => undefined,
@@ -411,7 +492,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
       setSectionView(view);
     },
     onAmbientSimplified: () => setToast('动态已简化'),
-  }), [sheet, viewing, check, onLine, onSelectCell, setToast]);
+  }), [sheet, viewing, check, armed, onLine, onSelectCell, setToast, onAudioCue]);
   const getPartAt = useCallback(
     (clientX: number, clientY: number) => buildingHandleRef.current?.partAt(clientX, clientY) ?? null,
     []
@@ -423,6 +504,24 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   );
   const onWobblePart = useCallback((lineId: string) => {
     buildingHandleRef.current?.wobblePart(lineId);
+    onAudioCue('drop.nothing', lineId);
+  }, [onAudioCue]);
+  const openTray = useCallback(() => {
+    if (!trayCueOpen.current) {
+      trayCueOpen.current = true;
+      onAudioCue('paper.fan', `tray:${audioActionSeq.current++}`);
+    }
+    setTrayOpen(true);
+  }, [onAudioCue]);
+  useEffect(() => {
+    if (!trayOpen) trayCueOpen.current = false;
+  }, [trayOpen]);
+  const armLine = useCallback((lineId: string | null) => {
+    if (lineId && lineId !== armed) onAudioCue('dice.grab', lineId);
+    setArmed(lineId);
+  }, [armed, onAudioCue]);
+  const changeAudioSetting = useCallback((field: 'master' | 'ambience' | 'music', value: number) => {
+    setAudioSettings((settings) => ({ ...settings, [field]: value }));
   }, []);
   const onDropTarget = useCallback((lineId: string | null) => {
     if (lineId === null) buildingHandleRef.current?.partAt(-1, -1);
@@ -515,7 +614,51 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
             >
               动态 {ambientEnabled ? '开' : '关'}
             </button>
+            <button
+              type="button"
+              className="sound-switch"
+              aria-pressed={!audioSettings.muted}
+              aria-label="声音 开/关"
+              onClick={() => setAudioSettings((settings) => ({ ...settings, muted: !settings.muted }))}
+            >
+              声音 {audioSettings.muted ? '关' : '开'}
+            </button>
+            <button
+              type="button"
+              className="sound-settings-toggle"
+              aria-expanded={audioSettingsOpen}
+              aria-controls="audio-settings-panel"
+              onClick={() => setAudioSettingsOpen((open) => !open)}
+            >
+              音量
+            </button>
           </div>
+          {audioSettingsOpen && (
+            <section id="audio-settings-panel" className="audio-settings-panel" aria-label="声音设置">
+              <div className="audio-settings-heading">
+                <span>纸声与房间</span>
+                <button type="button" onClick={() => setAudioSettingsOpen(false)} aria-label="关闭声音设置">×</button>
+              </div>
+              {([
+                ['master', '总音量'],
+                ['ambience', '环境声'],
+                ['music', '音乐'],
+              ] as const).map(([field, label]) => (
+                <label key={field} className="audio-setting-row">
+                  <span>{label}</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={audioSettings[field]}
+                    aria-label={label}
+                    onChange={(event) => changeAudioSetting(field, Number(event.currentTarget.value))}
+                  />
+                  <output>{audioSettings[field]}</output>
+                </label>
+              ))}
+            </section>
+          )}
           {caption && (
             <div className="building-hour-caption" key={caption.title}>
               <div className="world-kicker">{caption.title}</div>
@@ -532,7 +675,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
               arrivals={arrivals}
               onOpen={onOpenCase}
               rootRef={notebookRef}
-              onTrayOpen={() => setTrayOpen(true)}
+              onTrayOpen={openTray}
             />
             <CardTray
               open={trayOpen && Boolean(state.case?.notebook)}
@@ -570,7 +713,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
               graph={graph}
               armedLineId={armed}
               check={check}
-              onArm={setArmed}
+              onArm={armLine}
               onAct={onLine}
               onCheckDone={finishCheck}
               playerCoatTone={playerCoatTone}

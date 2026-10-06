@@ -13,6 +13,7 @@ import { disposeGroup } from './dispose';
 import { mechanismFor, restPose } from './mechanisms';
 import { moveTimeline, type Key } from './motion';
 import { lockReasonText } from '../../engine/selectors';
+import type { Cue } from '../../audio/cues';
 import {
   cellAtPoint,
   cellOrigin3d,
@@ -57,6 +58,7 @@ export interface BuildingInput {
 }
 
 export interface BuildingCallbacks {
+  onAudioCue?(cue: Cue, key?: string, delayMs?: number): void;
   onPickHotspot(lineId: string): void;
   onPickCell(cellId: string): void;
   onHoverCell(cellId: string | null): void;
@@ -92,6 +94,7 @@ export interface BuildingHandle {
   update(input: BuildingInput): void;
   resize(width: number, height: number): void;
   advance(ms: number): Promise<void>;
+  now(): number;
   partAt(clientX: number, clientY: number): string | null;
   notebookAnchor(rect: DOMRect): THREE.Vector3;
   wobblePart(lineId: string): void;
@@ -2103,8 +2106,16 @@ export function mountBuilding(
 
   function activateInteraction(target: RoomInteraction, fromProgress?: number) {
     if (target.hotspot.status !== 'open') {
+      callbacks.onAudioCue?.('lock.rattle', target.hotspot.lineId);
       feedbackFor(target);
       return;
+    }
+    if (target.hotspot.lineId === 'ev-stair-notebook') {
+      callbacks.onAudioCue?.('book.open', target.hotspot.lineId);
+    } else if (target.spec.kind === 'flip') {
+      callbacks.onAudioCue?.('paper.flip', target.hotspot.lineId);
+    } else if (target.spec.kind === 'lift' || target.spec.kind === 'pickup') {
+      callbacks.onAudioCue?.('cloth.lift', target.hotspot.lineId);
     }
     if (target.spec.kind === 'lean') callbacks.onCloseUp(target.hotspot.lineId);
     const duration =
@@ -2669,6 +2680,9 @@ export function mountBuilding(
       animationClock.advance(ms);
       draw();
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    },
+    now() {
+      return animationNow();
     },
     partAt(clientX, clientY) {
       const target = pickedInteraction(clientX, clientY);

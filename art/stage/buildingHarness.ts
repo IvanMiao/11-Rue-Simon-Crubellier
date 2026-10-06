@@ -5,6 +5,7 @@ import type { BuildingCallbacks, BuildingHandle, BuildingInput } from './buildin
 import type { SectionView } from './sectionLayout';
 import type { StageHotspot } from './types';
 import { MECHANISMS } from './mechanisms';
+import { createAudioController } from '../../audio/audio';
 
 declare global {
   interface Window {
@@ -14,6 +15,7 @@ declare global {
 
 const params = new URLSearchParams(window.location.search);
 const manualClock = params.get('clock') === 'manual';
+const audioLogEnabled = params.get('audioLog') === '1';
 const pinCamera = params.get('pinCamera') === '1';
 const mechParam = params.get('mech');
 const lockParam = params.get('lock');
@@ -118,6 +120,12 @@ async function mount() {
   let focusCell = focus;
   let currentView = view;
   let handle: BuildingHandle | null = null;
+  const audioController = audioLogEnabled
+    ? createAudioController({
+        now: () => handle?.now() ?? performance.now(),
+        captureOnly: true,
+      })
+    : null;
   let currentInput: BuildingInput = {
     current: focusCell,
     focus: focusCell,
@@ -145,6 +153,7 @@ async function mount() {
     pinCamera,
   };
   const callbacks: BuildingCallbacks = {
+    onAudioCue: (cue, key, delayMs) => audioController?.play(cue, key, { delayMs }),
     onPickHotspot: () => undefined,
     onPickCell: (cellId) => {
       focusCell = cellId;
@@ -183,6 +192,9 @@ async function mount() {
   };
   const { mountBuilding } = await import('./building');
   handle = mountBuilding(host, currentInput, callbacks);
+  if (audioController) {
+    window.addEventListener('pagehide', () => audioController.dispose(), { once: true });
+  }
   const idleCallbacks: Array<() => void> = [];
   const readyWaiters: Array<{
     resolve: () => void;
