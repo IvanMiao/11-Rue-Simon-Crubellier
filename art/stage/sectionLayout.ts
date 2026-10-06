@@ -44,8 +44,27 @@ export interface SectionFrame {
   pitch: number;
 }
 
+const BUILDING_LEFT = -BUILDING_WIDTH / 2 - 0.35;
+const BUILDING_RIGHT = BUILDING_WIDTH / 2 + 0.35;
+const BUILDING_BOTTOM = FLOOR_MIN * PITCH_Y - 0.45;
+const BUILDING_TOP = FLOOR_MAX * PITCH_Y + CELL_ROOM.H + 2;
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+export function clampFrameTarget(frame: SectionFrame, aspect: number): SectionFrame {
+  const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const halfWidth = (frame.viewHeight * safeAspect) / 2;
+  const halfHeight = frame.viewHeight / 2;
+  const xMin = BUILDING_LEFT + halfWidth;
+  const xMax = BUILDING_RIGHT - halfWidth;
+  const yMin = BUILDING_BOTTOM + halfHeight;
+  const yMax = BUILDING_TOP - halfHeight;
+  const target = [...frame.target] as SectionFrame['target'];
+  target[0] = xMin <= xMax ? clamp(target[0], xMin, xMax) : (BUILDING_LEFT + BUILDING_RIGHT) / 2;
+  target[1] = yMin <= yMax ? clamp(target[1], yMin, yMax) : (BUILDING_BOTTOM + BUILDING_TOP) / 2;
+  return { ...frame, target };
 }
 
 export function frameFor(view: SectionView, cellId: string, aspect: number): SectionFrame {
@@ -56,12 +75,12 @@ export function frameFor(view: SectionView, cellId: string, aspect: number): Sec
     const [x, y, z] = cellOrigin3d(cellId);
     const viewportWidth = CELL_ROOM.W + SECTION_PITCH.x * 0.5;
     const isClinamen = cellId === CLINAMEN_CELL;
-    return {
+    return clampFrameTarget({
       target: [x, y + CELL_ROOM.H / 2 - (isClinamen ? 0.48 : 0), z],
-      viewHeight: isClinamen ? 4.4 : Math.max(3.15, viewportWidth / safeAspect),
+      viewHeight: isClinamen ? 4.4 : Math.max(3.29, viewportWidth / safeAspect),
       yaw: ROOM_YAW,
       pitch: ROOM_PITCH,
-    };
+    }, safeAspect);
   }
 
   if (view === 'block') {
@@ -74,12 +93,12 @@ export function frameFor(view: SectionView, cellId: string, aspect: number): Sec
     ];
     const visibleWidth = 5 * PITCH_X;
     const visibleHeight = 5 * PITCH_Y;
-    return {
+    return clampFrameTarget({
       target,
       viewHeight: Math.max(visibleHeight, visibleWidth / safeAspect) * 1.12,
       yaw: ROOM_YAW * 0.38,
       pitch: ROOM_PITCH * 0.42,
-    };
+    }, safeAspect);
   }
 
   const roofTop = FLOOR_MAX * PITCH_Y + CELL_ROOM.H + 3.35;
@@ -88,12 +107,12 @@ export function frameFor(view: SectionView, cellId: string, aspect: number): Sec
     (roofTop - cellarBottom) * 1.1,
     (BUILDING_WIDTH / safeAspect) * 1.1
   );
-  return {
+  return clampFrameTarget({
     target: [0, (roofTop + cellarBottom) / 2, 0],
     viewHeight,
     yaw: 0,
     pitch: 0,
-  };
+  }, safeAspect);
 }
 
 export function flightPath(from: string, to: string, kind: FlightKind): string[] {

@@ -91,6 +91,48 @@ function windowMaterial() {
   return new THREE.MeshBasicMaterial({ color: PALETTE.skyWarm });
 }
 
+function ambientCurtains(g: THREE.Group, x0: number, x1: number, y0: number, y1: number, z: number) {
+  const curtains = new THREE.Group();
+  curtains.name = 'ambient-curtains';
+  curtains.userData.ambientCurtains = true;
+  const panelWidth = 0.22;
+  for (const side of [-1, 1]) {
+    const panel = new THREE.Group();
+    panel.name = 'ambient-curtain-panel';
+    panel.position.set(side < 0 ? x0 : x1, y1, z);
+    const fabric = box(
+      panel,
+      panelWidth,
+      y1 - y0,
+      0.035,
+      PALETTE.linen,
+      side * panelWidth * 0.48,
+      -(y1 - y0) / 2,
+      0
+    );
+    fabric.userData.noInk = false;
+    curtains.add(panel);
+  }
+  const sheer = new THREE.Group();
+  sheer.name = 'ambient-window-sheer';
+  sheer.position.set((x0 + x1) / 2, y1, z + 0.012);
+  const veil = new THREE.Mesh(
+    new THREE.PlaneGeometry(x1 - x0, y1 - y0),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.paper,
+      transparent: true,
+      opacity: 0.12,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  veil.position.y = -(y1 - y0) / 2;
+  veil.userData.noInk = true;
+  sheer.add(veil);
+  curtains.add(sheer);
+  g.add(curtains);
+}
+
 function wallPanel(g: THREE.Group, scene: CellScene, wall: THREE.Texture) {
   const { W, H, D } = CELL_ROOM;
   const wallZ = -D / 2;
@@ -117,21 +159,76 @@ function wallPanel(g: THREE.Group, scene: CellScene, wall: THREE.Texture) {
   box(g, 0.05, y1 - y0, 0.1, frame, (x0 + x1) / 2, (y0 + y1) / 2, frameZ);
   box(g, x1 - x0, 0.05, 0.1, frame, (x0 + x1) / 2, y0 + (y1 - y0) * 0.64, frameZ);
   box(g, x1 - x0 + 0.24, 0.06, 0.2, PALETTE.wood, (x0 + x1) / 2, y0 - 0.05, wallZ + 0.14);
+  ambientCurtains(g, x0, x1, y0, y1, wallZ + 0.11);
   return sky;
 }
 
 function pendant(g: THREE.Group) {
-  cylinder(g, 0.018, 0.018, 0.42, PALETTE.ink, 0, 2.78, 0);
+  const assembly = new THREE.Group();
+  assembly.name = 'ambient-pendant';
+  assembly.position.y = 2.84;
+  cylinder(assembly, 0.018, 0.018, 0.42, PALETTE.ink, 0, -0.21, 0);
   const shade = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.22, 12, 1, true), toonMaterial(PALETTE.brass));
-  shade.position.set(0, 2.56, 0);
+  shade.position.set(0, -0.28, 0);
   shade.castShadow = true;
-  g.add(shade);
+  assembly.add(shade);
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshBasicMaterial({ color: PALETTE.light }));
   bulb.name = 'pendant-bulb';
-  bulb.position.set(0, 2.48, 0);
+  bulb.position.set(0, -0.36, 0);
   bulb.userData.noInk = true;
   bulb.userData.sketchLamp = true;
-  g.add(bulb);
+  assembly.add(bulb);
+  g.add(assembly);
+}
+
+function wallClock(g: THREE.Group, x: number, y: number, z: number) {
+  const clock = new THREE.Group();
+  clock.name = 'ambient-wall-clock';
+  const rim = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.22, 0.055, 28),
+    toonMaterial(PALETTE.woodDark)
+  );
+  rim.rotation.x = Math.PI / 2;
+  clock.add(rim);
+  const face = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.18, 0.012, 28),
+    toonMaterial(PALETTE.linen)
+  );
+  face.rotation.x = Math.PI / 2;
+  face.position.z = 0.035;
+  clock.add(face);
+  const secondHand = new THREE.Group();
+  secondHand.name = 'ambient-second-hand';
+  secondHand.position.z = 0.045;
+  box(secondHand, 0.012, 0.14, 0.01, PALETTE.brass, 0, 0.07, 0);
+  secondHand.userData.ambientClockHand = true;
+  clock.add(secondHand);
+  clock.position.set(x, y, z);
+  g.add(clock);
+}
+
+function dustMotes(g: THREE.Group) {
+  const dust = new THREE.Group();
+  dust.name = 'ambient-dust';
+  dust.userData.ambientDust = true;
+  dust.visible = false;
+  for (let index = 0; index < 5; index += 1) {
+    const mote = new THREE.Mesh(
+      new THREE.SphereGeometry(0.014 + (index % 2) * 0.006, 6, 5),
+      new THREE.MeshBasicMaterial({
+        color: PALETTE.linen,
+        transparent: true,
+        opacity: 0.58,
+        depthWrite: false,
+      })
+    );
+    mote.position.set(-0.23 + (index % 3) * 0.18, 1.36 + index * 0.13, -0.86);
+    mote.userData.ambientMote = index;
+    mote.userData.basePosition = mote.position.toArray();
+    mote.userData.noInk = true;
+    dust.add(mote);
+  }
+  g.add(dust);
 }
 
 function floorRug(g: THREE.Group, color: string, x = 0, z = 0.4) {
@@ -264,14 +361,14 @@ function cutNotes() {
 function bartleboothHand() {
   const hand = new THREE.Group();
   hand.name = 'bb-hand';
-  hand.position.set(0.56, 1.06, 0.62);
+  hand.position.set(0.39, 1.01, 0.64);
   hand.scale.set(-0.62, 0.62, 1);
   hand.rotation.z = -0.08;
   const poses = ['closed', 'half', 'open'] as const;
   for (const pose of poses) {
     const canvas = roomCanvas(260, 170, (ctx) => drawBartleboothHand(ctx, pose));
     const map = texture(canvas);
-    const material = new THREE.MeshBasicMaterial({
+    const material = toonMaterial(PALETTE.paper, {
       map,
       transparent: true,
       alphaTest: 0.08,
@@ -356,7 +453,9 @@ function residentFigure(g: THREE.Group, scene: CellScene, x: number, z: number, 
     height,
     { mirror: scene.kind === 'atelier' }
   );
+  f.name = 'resident-figure';
   f.userData.sketchFigure = true;
+  f.userData.ambientFigure = true;
   f.position.set(x, 0, z);
   f.rotation.y = scene.kind === 'atelier' ? 0.12 : -0.08;
   g.add(f);
@@ -408,6 +507,7 @@ function liftCage(g: THREE.Group) {
   g.add(face);
   const needle = box(g, 0.018, 0.085, 0.018, PALETTE.brass, 0.86, 1.15, -1.2);
   needle.rotation.z = -0.48;
+  needle.name = 'lift-dial-needle';
 }
 
 function keyBoard(g: THREE.Group) {
@@ -530,6 +630,7 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       if (cellId === '0:5') g.add(keyring());
       broom(g, -1.32, -0.48);
       residentFigure(g, scene, 0.58, -0.12, 1.85);
+      if (cellId === '0:5') wallClock(g, -1.12, 2.13, -1.37);
       break;
     case 'atelier': {
       floorRug(g, PALETTE.washNavy, 0.22, 0.26);
@@ -554,34 +655,45 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       surface.position.y = 0.002;
       surface.userData.noInk = true;
       surface.name = 'bb-puzzle-surface';
-      const outline = new THREE.Shape();
-      outline.moveTo(-0.08, -0.24);
-      outline.lineTo(0.08, -0.24);
-      outline.lineTo(0.08, -0.08);
-      outline.lineTo(0.24, -0.08);
-      outline.lineTo(0.24, 0.08);
-      outline.lineTo(0.08, 0.08);
-      outline.lineTo(0.08, 0.24);
-      outline.lineTo(-0.08, 0.24);
-      outline.lineTo(-0.08, 0.08);
-      outline.lineTo(-0.24, 0.08);
-      outline.lineTo(-0.24, -0.08);
-      outline.lineTo(-0.08, -0.08);
-      outline.closePath();
-      const outlinePoints = outline
-        .getPoints(12)
-        .map((point) => new THREE.Vector3(point.x, 0, -point.y));
-      const trace = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(outlinePoints),
-        new THREE.LineBasicMaterial({ color: PALETTE.ink })
+      const outlinePoints = [
+        [-0.22, -0.27],
+        [-0.09, -0.08],
+        [0, -0.16],
+        [0.09, -0.08],
+        [0.22, -0.27],
+        [0.28, -0.21],
+        [0.12, 0],
+        [0.28, 0.21],
+        [0.22, 0.27],
+        [0.09, 0.08],
+        [0, 0.16],
+        [-0.09, 0.08],
+        [-0.22, 0.27],
+        [-0.28, 0.21],
+        [-0.12, 0],
+        [-0.28, -0.21],
+      ].map(([x, z]) =>
+        new THREE.Vector3(0.077 + x * 0.3, 0, 0.07 + z * 0.3)
+      );
+      const outlineCurve = new THREE.CatmullRomCurve3(outlinePoints, true, 'centripetal');
+      const trace = new THREE.Mesh(
+        new THREE.TubeGeometry(outlineCurve, 96, 0.0024, 8, true),
+        new THREE.MeshBasicMaterial({
+          color: PALETTE.ink,
+          transparent: true,
+          opacity: 0.96,
+          depthTest: true,
+          depthWrite: false,
+        })
       );
       trace.name = 'bb-puzzle-trace';
-      trace.position.y = 0.009;
+      trace.position.y = 0.008;
       trace.visible = false;
       trace.userData.noInk = true;
       puzzle.add(surface, trace);
       g.add(puzzle);
       const piece = knightPiece(0.22);
+      piece.name = 'bb-puzzle-piece';
       piece.position.set(0.14, 0.8, -0.08);
       g.add(piece);
       teaCup(g, 0.28, 0.84, 0.16);
@@ -673,6 +785,26 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       place(g, boiler(), -0.52, -0.48);
       place(g, coalPile(seed + 21, 48), 0.62, 0.44);
       for (let i = 0; i < 3; i++) cylinder(g, 0.035, 0.035, 1.5, TONES.steel, -1.35 + i * 0.2, 1.0, -1.4);
+      {
+        const fire = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.32, 0.38),
+          new THREE.MeshBasicMaterial({
+            color: PALETTE.accent,
+            transparent: true,
+            opacity: 0.76,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          })
+        );
+        fire.name = 'ambient-boiler-fire';
+        fire.position.set(-0.52, 0.54, 0.04);
+        fire.userData.noInk = true;
+        g.add(fire);
+        const fireLight = new THREE.PointLight(PALETTE.accent, 1.4, 3.4);
+        fireLight.name = 'ambient-fire-light';
+        fireLight.position.set(-0.52, 0.62, 0.18);
+        g.add(fireLight);
+      }
       break;
     case 'shop':
       place(g, shopCounter({ w: 2.5, seed }), 0, -0.8);
@@ -681,6 +813,7 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       box(g, 0.34, 0.028, 0.24, PALETTE.paperDeep, -0.32, 0.97, -0.56);
       box(g, 0.29, 0.012, 0.19, PALETTE.linen, -0.32, 0.991, -0.56);
       box(g, 0.025, 0.034, 0.24, PALETTE.accent, -0.47, 0.97, -0.56);
+      if (cellId === '0:3') wallClock(g, 1.03, 2.12, -1.37);
       break;
     case 'archive':
       dictionaryBoxes(g);
@@ -777,6 +910,8 @@ export function buildCellRoom(scene: CellScene, cellId: string): THREE.Group {
     : null;
   if (!hasWindow) {
     box(group, W, H, 0.12, toonMaterial(PALETTE.paper, { map: wall }), 0, H / 2, -D / 2);
+  } else {
+    dustMotes(group);
   }
 
   box(group, W, 0.12, 0.05, PALETTE.woodDark, 0, 0.06, -D / 2 + 0.04);

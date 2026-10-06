@@ -7,10 +7,11 @@ import { drawCardArt } from '../draw/cardArt';
 import { CELLS, CELL_BY_ID } from '../../world/damier';
 import { buildCellRoom } from './cellRooms';
 import { buildBuildingSection } from './buildingSection';
-import { CELL_ROOM, PLAYER_SPOT, cellScene, anchorFor } from './cellScenes';
+import { CELL_ROOM, cellScene, anchorFor, playerSpot } from './cellScenes';
 import { createFlatsAtlas } from './flatsAtlas';
 import { disposeGroup } from './dispose';
 import { mechanismFor, restPose } from './mechanisms';
+import { moveTimeline, type Key } from './motion';
 import { lockReasonText } from '../../engine/selectors';
 import {
   cellAtPoint,
@@ -18,6 +19,7 @@ import {
   detailTier,
   flightPath,
   frameFor,
+  clampFrameTarget,
   SECTION_CELL_IDS,
   SECTION_PITCH,
   type FlightKind,
@@ -30,6 +32,7 @@ export type { StageHotspot } from './types';
 export interface BuildingInput {
   current: string;
   focus: string;
+  elevatorFloor: number;
   view: SectionView;
   closeUp: string | null;
   hour: 20 | 21 | 22 | 23;
@@ -47,6 +50,10 @@ export interface BuildingInput {
   previewLockLine?: string | null;
   previewParallax?: number;
   lastMove: { from: string; to: string; kind: FlightKind } | null;
+  ambient: boolean;
+  reducedMotion: boolean;
+  clockMode?: 'realtime' | 'manual';
+  pinCamera?: boolean;
 }
 
 export interface BuildingCallbacks {
@@ -58,6 +65,7 @@ export interface BuildingCallbacks {
   onExitCloseUp(): void;
   getNotebookRect(): DOMRect | null;
   onViewChange(view: SectionView): void;
+  onAmbientSimplified(): void;
 }
 
 export interface BuildingStats {
@@ -75,12 +83,15 @@ export interface BuildingStats {
   atlasDrawMs: number;
   atlasPendingTiles: number;
   roomsBuilt: number;
+  ambientOnMedianMs: number | null;
+  ambientOffMedianMs: number | null;
   idle: boolean;
 }
 
 export interface BuildingHandle {
   update(input: BuildingInput): void;
   resize(width: number, height: number): void;
+  advance(ms: number): Promise<void>;
   partAt(clientX: number, clientY: number): string | null;
   notebookAnchor(rect: DOMRect): THREE.Vector3;
   wobblePart(lineId: string): void;
@@ -99,6 +110,27 @@ interface CameraPose {
   viewHeight: number;
   yaw: number;
   pitch: number;
+}
+
+interface StageClock {
+  manual: boolean;
+  now(): number;
+  advance(ms: number): void;
+}
+
+function createStageClock(manual: boolean): StageClock {
+  let time = 0;
+  return {
+    manual,
+    now: () => (manual ? time : performance.now()),
+    advance(ms) {
+      if (!manual) throw new Error('The stage clock is not in manual mode.');
+      if (!Number.isFinite(ms) || ms < 0) {
+        throw new RangeError('Manual clock advances must be finite and non-negative.');
+      }
+      time += ms;
+    },
+  };
 }
 
 interface RoomEntry {
@@ -163,11 +195,41 @@ interface CameraTween {
 }
 
 interface CameraFlight {
-  frames: CameraPose[];
-  path: string[];
+  keys: Key[];
+  from: string;
+  to: string;
   started: number;
   duration: number;
   flightHeight: number;
+  followOffset: THREE.Vector3;
+  followVelocity: THREE.Vector3;
+  followTarget: THREE.Vector3;
+  lastTime: number;
+  fromYaw: number;
+  fromPitch: number;
+  toYaw: number;
+  toPitch: number;
+}
+
+interface ArrivalFade {
+  started: number;
+  duration: number;
+  opacity: { value: number };
+  overlay: THREE.Group | null;
+  materials: Set<THREE.ShaderMaterial>;
+  lineMaterial: THREE.LineBasicMaterial | null;
+}
+
+interface HourTransition {
+  fromHour: BuildingInput['hour'];
+  toHour: BuildingInput['hour'];
+  started: number;
+  duration: number;
+  fromLamps: Set<string>;
+  targetLamps: Set<string>;
+  lampOrder: string[];
+  lastLampKey: string;
+  reducedMotion: boolean;
 }
 
 const hotspotGlyph: Record<StageHotspot['kind'], string> = {
@@ -184,6 +246,22 @@ const statusGlyph: Partial<Record<StageHotspot['status'], string>> = {
 const VIEW_ORDER: SectionView[] = ['room', 'block', 'building'];
 const FRONT_Z = 2.16;
 const MAX_ROOMS = 12;
+let ambientSimplifiedForSession = false;
+
+function cellHash(cellId: string): number {
+  let hash = 2166136261;
+  for (const character of cellId) {
+    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  }
+  return hash >>> 0;
+}
+
+function medianMs(samples: number[]): number | null {
+  if (samples.length === 0) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
 const sketchPaperMaterial = toonMaterial(PALETTE.linen);
 sketchPaperMaterial.userData.shared = true;
 const sketchWindowMaterial = new THREE.MeshBasicMaterial({ color: PALETTE.paper });
@@ -413,6 +491,8 @@ export function mountBuilding(
   initial: BuildingInput,
   callbacks: BuildingCallbacks
 ): BuildingHandle {
+  const animationClock = createStageClock(initial.clockMode === 'manual');
+  const animationNow = () => animationClock.now();
   const startedAt = performance.now();
   const rendererStartedAt = performance.now();
   const scene = new THREE.Scene();
@@ -486,7 +566,7 @@ export function mountBuilding(
   const rooms = new Map<string, RoomEntry>();
   let desiredRooms = new Set<string>();
   let roomQueue: string[] = [];
-  const knight = knightPiece(0.82);
+  const knight = knightPiece(0.45);
   knight.name = 'player-knight';
   root.add(knight);
   const hotspotGroup = new THREE.Group();
@@ -503,7 +583,7 @@ export function mountBuilding(
   overlayScene.add(hoverGroup);
   const partHoverGroup = new THREE.Group();
   partHoverGroup.name = 'building-part-hover';
-  overlayScene.add(partHoverGroup);
+  scene.add(partHoverGroup);
   const lockTagGroup = new THREE.Group();
   lockTagGroup.name = 'building-lock-tags';
   overlayScene.add(lockTagGroup);
@@ -518,6 +598,9 @@ export function mountBuilding(
   let currentPose = toPose(frameFor(initial.view, initial.focus, 1));
   let cameraTween: CameraTween | null = null;
   let cameraFlight: CameraFlight | null = null;
+  let pendingArrivalFade: { cellId: string; duration: number } | null = null;
+  const arrivalFades = new Map<string, ArrivalFade>();
+  let hourTransition: HourTransition | null = null;
   let firstReadyMs: number | null = null;
   let firstInkRenderMs: number | null = null;
   let inkRenderMs = 0;
@@ -541,21 +624,38 @@ export function mountBuilding(
   let hoverCell: string | null = null;
   let hoveredHotspot: THREE.Sprite | null = null;
   let hoveredPart: RoomInteraction | null = null;
+  let warmedPart: THREE.Object3D | null = null;
   let activeDrag: ActiveDrag | null = null;
   let parallaxStart: { x: number; y: number; pose: CameraPose } | null = null;
   const mechanismTweens = new Map<string, MechanismTween>();
   const objectFlights = new Map<string, ObjectFlight>();
   const cardFlights = new Set<CardFlight>();
   let lockTagTimeout: number | null = null;
+  let lockTagHideAt: number | null = null;
   let previewLockTriggered = false;
   const lampLights = new Map<string, THREE.PointLight>();
   let lastMoveObject = initial.lastMove;
   let requestedView = initial.view;
+  let ambientSuppressed = ambientSimplifiedForSession;
+  let ambientWasActive = false;
+  let lastAmbientUpdate = 0;
+  let pendantLanding: { cellId: string; started: number } | null = null;
+  let pausedAt: number | null = null;
+  const ambientOnFrames: number[] = [];
+  const ambientOffFrames: number[] = [];
   let suppressClickUntil = 0;
   const pointerPositions = new Map<number, THREE.Vector2>();
   let pinchStartDistance: number | null = null;
   let pinchStartChanged = false;
   const raycaster = new THREE.Raycaster();
+  const brassRimMaterial = new THREE.MeshBasicMaterial({
+    color: PALETTE.brass,
+    side: THREE.BackSide,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false,
+    toneMapped: false,
+  });
   const pointer = new THREE.Vector2();
   const pickPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -FRONT_Z);
   const pickPoint = new THREE.Vector3();
@@ -566,15 +666,20 @@ export function mountBuilding(
     sketchMaterialSwapMs += performance.now() - started;
   }
   const initialFrame = frameFor(initial.view, initial.focus, 1);
-  currentPose = toPose(initialFrame, initialFrame.viewHeight * 2.2);
+  currentPose = animationClock.manual
+    ? toPose(initialFrame)
+    : toPose(initialFrame, initialFrame.viewHeight * 2.2);
   applyCameraPose(currentPose);
-  cameraTween = {
-    from: clonePose(currentPose),
-    to: toPose(initialFrame),
-    started: performance.now(),
-    duration: 600,
-  };
+  cameraTween = animationClock.manual
+    ? null
+    : {
+        from: clonePose(currentPose),
+        to: toPose(initialFrame),
+        started: animationNow(),
+        duration: 600,
+      };
   setKnightCell(initial.current);
+  knight.visible = !initial.closeUp;
 
   function setFrustum(viewHeight: number) {
     const aspect = size.width / Math.max(1, size.height);
@@ -610,7 +715,13 @@ export function mountBuilding(
       if (target) pose.target.copy(target.anchor);
       pose.viewHeight = 1.2;
       pose.pitch += 0.055;
+      if (input.closeUp === 'ev-bb-puzzle') pose.yaw -= 0.2;
     }
+    const clamped = clampFrameTarget(
+      { target: [pose.target.x, pose.target.y, pose.target.z], viewHeight: pose.viewHeight, yaw: pose.yaw, pitch: pose.pitch },
+      size.width / Math.max(1, size.height)
+    );
+    pose.target.set(...clamped.target);
     if (input.previewParallax !== undefined && input.view === 'room') {
       const offset = THREE.MathUtils.clamp(input.previewParallax, -20, 20);
       pose.yaw += THREE.MathUtils.degToRad(offset);
@@ -618,17 +729,19 @@ export function mountBuilding(
     }
     return pose;
   }
-  cameraTween = {
-    from: clonePose(currentPose),
-    to: frameForInput(initial),
-    started: performance.now(),
-    duration: 600,
-  };
+  currentPose = frameForInput(initial);
+  applyCameraPose(currentPose);
+  cameraTween = null;
 
   function setKnightCell(cellId: string) {
     const [x, y, z] = cellOrigin3d(cellId);
-    const [spotX, spotY, spotZ] = PLAYER_SPOT[cellScene(cellId).kind];
+    const [spotX, spotY, spotZ] = playerSpot(cellId);
     knight.position.set(x + spotX, y + spotY, z + spotZ);
+  }
+
+  function syncCloseUpProps(group: THREE.Group, input: BuildingInput) {
+    const tablePiece = group.getObjectByName('bb-puzzle-piece');
+    if (tablePiece) tablePiece.visible = !(input.closeUp && group.userData.cellId === '3:1');
   }
 
   function currentRoomInteractions(): RoomInteraction[] {
@@ -730,12 +843,19 @@ export function mountBuilding(
       }
       object.rotation.z += Math.sin(pose * Math.PI) * 0.045;
     } else if (target.spec.kind === 'lean') {
-      const trace = object.getObjectByName('bb-puzzle-trace') as THREE.Line | undefined;
+      const trace = object.getObjectByName('bb-puzzle-trace') as THREE.Mesh | undefined;
       if (trace) {
         trace.visible = pose > 0.01;
         const material = trace.material as THREE.LineBasicMaterial;
         material.transparent = true;
-        material.opacity = pose;
+        material.opacity = 0.96;
+        const geometry = trace.geometry;
+        const indexCount = geometry.index?.count ?? geometry.getAttribute('position').count;
+        const indicesPerTubeSegment = 8 * 6;
+        geometry.setDrawRange(
+          0,
+          Math.floor((indexCount * pose) / indicesPerTubeSegment) * indicesPerTubeSegment
+        );
       }
     } else if (target.spec.kind === 'pickup') {
       object.position.y += pose * 0.3;
@@ -799,7 +919,7 @@ export function mountBuilding(
       (typeof target.object?.userData.mechanismProgress === 'number'
         ? target.object.userData.mechanismProgress
         : restPose(target.hotspot.lineId, target.hotspot.status, currentInput.hour));
-    mechanismTweens.set(key, { target, from, to, started: performance.now(), duration, onComplete });
+    mechanismTweens.set(key, { target, from, to, started: animationNow(), duration, onComplete });
   }
 
   function notebookAnchor(rect: DOMRect): THREE.Vector3 {
@@ -862,7 +982,7 @@ export function mountBuilding(
         mesh,
         from: mesh.position.clone(),
         to: destination.clone(),
-        started: performance.now() + index * 120,
+        started: animationNow() + index * 120,
         duration: 680,
         targetRect: rect,
         arrivalFrom,
@@ -889,7 +1009,7 @@ export function mountBuilding(
       startScale: object.scale.clone(),
       startRotation: object.rotation.clone(),
       targetRect: rect,
-      started: performance.now(),
+      started: animationNow(),
       duration: 640,
       onComplete,
     });
@@ -970,7 +1090,7 @@ export function mountBuilding(
   function wobble(target: RoomInteraction, amplitude: number, duration: number) {
     if (!target.object) return;
     target.object.userData.wobble = {
-      started: performance.now(),
+      started: animationNow(),
       duration,
       base: target.object.rotation.z,
       amplitude,
@@ -980,6 +1100,8 @@ export function mountBuilding(
   function showLockTag(target: RoomInteraction, autoHide = true) {
     if (!target.hotspot.lock) return;
     if (lockTagTimeout !== null) window.clearTimeout(lockTagTimeout);
+    lockTagTimeout = null;
+    lockTagHideAt = null;
     disposeGroupContents(lockTagGroup);
     const message = lockReasonText(target.hotspot.lock);
     const canvas = document.createElement('canvas');
@@ -1032,12 +1154,14 @@ export function mountBuilding(
     lockTagGroup.add(tag);
     wobble(target, 0.11, 360);
     if (autoHide) {
-      lockTagTimeout = window.setTimeout(() => {
-        disposeGroupContents(lockTagGroup);
-        lockTagTimeout = null;
-      }, 2400);
-    } else {
-      lockTagTimeout = null;
+      lockTagHideAt = animationNow() + 2400;
+      if (!animationClock.manual) {
+        lockTagTimeout = window.setTimeout(() => {
+          disposeGroupContents(lockTagGroup);
+          lockTagHideAt = null;
+          lockTagTimeout = null;
+        }, 2400);
+      }
     }
   }
 
@@ -1053,19 +1177,240 @@ export function mountBuilding(
   }
 
   function refreshPartHover() {
-    disposeGroupContents(partHoverGroup);
+    if (warmedPart) {
+      warmedPart.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || !('hoverOriginalMaterial' in mesh.userData)) return;
+        mesh.material = mesh.userData.hoverOriginalMaterial as THREE.Material | THREE.Material[];
+        delete mesh.userData.hoverOriginalMaterial;
+      });
+      warmedPart = null;
+    }
+    for (const child of [...partHoverGroup.children]) partHoverGroup.remove(child);
     const target = hoveredPart ?? (currentInput.highlight ? interactionForLine(currentInput.highlight) : null);
     if (!target?.object) return;
-    const bounds = new THREE.Box3().setFromObject(target.object);
-    if (bounds.isEmpty()) return;
-    const outline = new THREE.Box3Helper(bounds.expandByScalar(0.035), PALETTE.brass);
-    outline.renderOrder = 1101;
-    partHoverGroup.add(outline);
+    target.object.updateWorldMatrix(true, true);
+    target.object.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.visible) return;
+      if (!('hoverOriginalMaterial' in mesh.userData)) {
+        const original = mesh.material;
+        mesh.userData.hoverOriginalMaterial = original;
+        const warm = (material: THREE.Material) => {
+          const clone = material.clone();
+          if ('emissive' in clone) {
+            const emissive = (clone as THREE.MeshToonMaterial).emissive;
+            emissive.set(PALETTE.brass);
+            (clone as THREE.MeshToonMaterial).emissiveIntensity = 0.18;
+          } else if ('color' in clone) {
+            (clone as THREE.MeshBasicMaterial).color.lerp(new THREE.Color(PALETTE.brass), 0.11);
+          }
+          return clone;
+        };
+        mesh.material = Array.isArray(original) ? original.map(warm) : warm(original);
+      }
+      const hull = new THREE.Mesh(mesh.geometry, brassRimMaterial);
+      hull.position.copy(mesh.getWorldPosition(new THREE.Vector3()));
+      hull.quaternion.copy(mesh.getWorldQuaternion(new THREE.Quaternion()));
+      hull.scale.copy(mesh.getWorldScale(new THREE.Vector3())).multiplyScalar(1.035);
+      hull.renderOrder = 20;
+      hull.frustumCulled = false;
+      partHoverGroup.add(hull);
+    });
+    warmedPart = target.object;
   }
 
-  function updateLampLights(input: BuildingInput) {
-    const litCells = new Set(input.hour >= 22 ? input.lamps : []);
-    if (input.hour === 23) litCells.add(input.current);
+  function syncLiftDials(floor: number, moving = false, now = animationNow()) {
+    const angle = -0.48 + floor * 0.12 + (moving ? Math.sin(now * 0.006) * 0.022 : 0);
+    section.elevatorCage.position.y = floor * SECTION_PITCH.y;
+    section.elevatorNeedle.position.y = floor * SECTION_PITCH.y + 1.3;
+    section.elevatorCage.position.z = CELL_ROOM.D / 2 + 0.12;
+    section.elevatorNeedle.position.z = CELL_ROOM.D / 2 + 0.22;
+    section.elevatorNeedle.rotation.z = angle;
+    for (const entry of rooms.values()) {
+      const needle = entry.group.getObjectByName('lift-dial-needle') as THREE.Mesh | undefined;
+      if (needle) {
+        needle.userData.ambientBaseRotation = angle;
+        needle.rotation.z = angle;
+      }
+    }
+  }
+
+  function ambientIsActive() {
+    return (
+      currentInput.ambient &&
+      !currentInput.reducedMotion &&
+      !ambientSuppressed &&
+      !currentInput.closeUp &&
+      (currentInput.view === 'room' || currentInput.view === 'block')
+    );
+  }
+
+  function resetAmbient() {
+    for (const entry of rooms.values()) resetAmbientEntry(entry);
+    ambientWasActive = false;
+  }
+
+  function resetAmbientEntry(entry: RoomEntry) {
+    entry.group.traverse((object) => {
+      if (object.userData.ambientFigure || object.name === 'ambient-second-hand') {
+        object.rotation.z = 0;
+      }
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      if (mesh.name === 'ambient-boiler-fire') {
+        mesh.scale.y = 1;
+        const material = (mesh.userData.sketchOriginalMaterial ?? mesh.material) as THREE.MeshBasicMaterial;
+        material.color.set(PALETTE.accent);
+        material.opacity = 0.76;
+      }
+      if (mesh.name === 'lift-dial-needle') {
+        mesh.rotation.z = Number(mesh.userData.ambientBaseRotation ?? -0.48);
+      }
+      if (mesh.userData.ambientMote !== undefined) {
+        const base = mesh.userData.basePosition as [number, number, number];
+        mesh.position.set(...base);
+      }
+    });
+    const curtains = entry.group.getObjectByName('ambient-curtains');
+    curtains?.children.forEach((panel) => {
+      panel.rotation.z = 0;
+      panel.rotation.y = 0;
+    });
+    const pendant = entry.group.getObjectByName('ambient-pendant');
+    if (pendant) pendant.rotation.z = 0;
+    const dust = entry.group.getObjectByName('ambient-dust');
+    if (dust) dust.visible = false;
+    const fireLight = entry.group.getObjectByName('ambient-fire-light') as THREE.PointLight | undefined;
+    if (fireLight) fireLight.intensity = 1.4;
+  }
+
+  function updateAmbient(now: number) {
+    if (!ambientIsActive()) {
+      if (ambientWasActive) resetAmbient();
+      return;
+    }
+    if (now - lastAmbientUpdate < 1000 / 30) return;
+    lastAmbientUpdate = now;
+    ambientWasActive = true;
+    for (const [cellId, entry] of rooms) {
+      if (
+        !entry.group.visible ||
+        !desiredRooms.has(cellId) ||
+        entry.group.userData.sketchMode
+      ) continue;
+      const phase = (cellHash(cellId) % 628319) / 100000;
+      entry.group.traverse((object) => {
+        if (object.userData.ambientFigure) {
+          object.rotation.z = Math.sin(now * 0.0012 + phase) * 0.010472;
+        }
+        if (object.name === 'ambient-second-hand') {
+          object.rotation.z = -(((now / 1000 + phase * 7) % 60) / 60) * Math.PI * 2;
+        }
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        if (mesh.name === 'ambient-boiler-fire') {
+          const flicker =
+            0.5 +
+            Math.sin(now * 0.019 + phase) * 0.28 +
+            Math.sin(now * 0.031 + phase * 1.7) * 0.16;
+          mesh.scale.y = 0.88 + flicker * 0.3;
+          const material = mesh.material as THREE.MeshBasicMaterial;
+          material.color.set(PALETTE.paperDeep).lerp(new THREE.Color(PALETTE.accent), flicker);
+          material.opacity = 0.58 + flicker * 0.24;
+          const fireLight = entry.group.getObjectByName('ambient-fire-light') as THREE.PointLight | undefined;
+          if (fireLight) fireLight.intensity = 0.95 + flicker * 1.05;
+        }
+        if (mesh.userData.ambientMote !== undefined) {
+          const base = mesh.userData.basePosition as [number, number, number];
+          const index = Number(mesh.userData.ambientMote);
+          const drift = now * 0.00018 + phase + index * 1.7;
+          mesh.position.set(
+            base[0] + Math.sin(drift) * 0.045,
+            base[1] + Math.sin(drift * 0.35) * 0.21,
+            base[2] + Math.cos(drift * 0.7) * 0.025
+          );
+        }
+      });
+      const curtains = entry.group.getObjectByName('ambient-curtains');
+      curtains?.children.forEach((panel, index) => {
+        const panelPhase = phase + index * 0.8;
+        panel.rotation.z = Math.sin(now * 0.0009 + panelPhase) * 0.026;
+        panel.rotation.y = Math.sin(now * 0.0007 + panelPhase) * 0.018;
+      });
+      const needle = entry.group.getObjectByName('lift-dial-needle') as THREE.Mesh | undefined;
+      if (needle && cellId === '0:7') {
+        const base = Number(needle.userData.ambientBaseRotation ?? needle.rotation.z);
+        needle.rotation.z = base + Math.sin(now * 0.006 + phase) * 0.008;
+      }
+      const dust = entry.group.getObjectByName('ambient-dust');
+      if (dust) dust.visible = cellId === currentInput.current;
+      const pendant = entry.group.getObjectByName('ambient-pendant');
+      if (pendant) {
+        const elapsed =
+          pendantLanding?.cellId === cellId ? now - pendantLanding.started : Number.POSITIVE_INFINITY;
+        pendant.rotation.z =
+          elapsed >= 0 && elapsed < 2000
+            ? Math.sin(elapsed * 0.016 + phase) * 0.058 * Math.exp(-elapsed / 760)
+            : 0;
+      }
+    }
+    if (pendantLanding && now - pendantLanding.started >= 2000) pendantLanding = null;
+  }
+
+  function targetLampCells(input: BuildingInput): Set<string> {
+    const cells = new Set(input.hour >= 21 ? input.lamps : []);
+    if (input.hour === 23) cells.add(input.current);
+    return cells;
+  }
+
+  function lampCellsAt(input: BuildingInput, now: number): Set<string> {
+    const transition = hourTransition;
+    const target = transition?.targetLamps ?? targetLampCells(input);
+    if (!transition || transition.reducedMotion || transition.lampOrder.length === 0) return target;
+    const cells = new Set([...target].filter((cellId) => transition.fromLamps.has(cellId)));
+    const lastIndex = Math.max(1, transition.lampOrder.length - 1);
+    transition.lampOrder.forEach((cellId, index) => {
+      const started =
+        transition.started + (index / lastIndex) * 1500;
+      if (now < started) return;
+      const flicker = now - started;
+      const on =
+        flicker >= 150 ||
+        flicker < 38 ||
+        (flicker >= 72 && flicker < 112);
+      if (on) cells.add(cellId);
+    });
+    return cells;
+  }
+
+  function blendedHour(now: number) {
+    if (!hourTransition) {
+      const light = HOUR_LIGHT[currentInput.hour];
+      return {
+        ...light,
+        tint: new THREE.Color(light.tint),
+        shade: new THREE.Color(light.shade),
+      };
+    }
+    const progress = Math.min(
+      1,
+      Math.max(0, (now - hourTransition.started) / hourTransition.duration)
+    );
+    const eased = progress * progress * (3 - 2 * progress);
+    const from = HOUR_LIGHT[hourTransition.fromHour];
+    const to = HOUR_LIGHT[hourTransition.toHour];
+    return {
+      tint: new THREE.Color(from.tint).lerp(new THREE.Color(to.tint), eased),
+      shade: new THREE.Color(from.shade).lerp(new THREE.Color(to.shade), eased),
+      angle: from.angle + (to.angle - from.angle) * eased,
+      strength: from.strength + (to.strength - from.strength) * eased,
+      night: from.night + (to.night - from.night) * eased,
+    };
+  }
+
+  function updateLampLights(input: BuildingInput, now = animationNow()) {
+    const litCells = lampCellsAt(input, now);
     for (const [cellId, pointLight] of lampLights) {
       if (litCells.has(cellId) && rooms.get(cellId)?.group.visible) continue;
       scene.remove(pointLight);
@@ -1081,9 +1426,7 @@ export function mountBuilding(
       scene.add(pointLight);
     }
     for (const [cellId, entry] of rooms) {
-      const lit =
-        input.hour >= 22 &&
-        (input.lamps.includes(cellId) || (input.hour === 23 && input.current === cellId));
+      const lit = litCells.has(cellId);
       const bulb = entry.group.getObjectByName('pendant-bulb') as THREE.Mesh | undefined;
       if (entry.group.userData.sketchMode && bulb) {
         bulb.material = lit ? sketchLampOnMaterial : sketchLampOffMaterial;
@@ -1094,24 +1437,31 @@ export function mountBuilding(
     }
   }
 
-  function updateLighting(input: BuildingInput, shadowChanged = false) {
-    const light = HOUR_LIGHT[input.hour];
+  function updateHourLighting(input: BuildingInput, now = animationNow()) {
+    const light = blendedHour(now);
     const angle = ((light.angle - 112) * Math.PI) / 180;
     const direction = new THREE.Vector3(...LIGHT_2000.sunDir);
     direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle).normalize();
     const focus = cellOrigin3d(input.focus);
     sun.target.position.set(focus[0], focus[1] + CELL_ROOM.H / 2, focus[2]);
     sun.position.copy(sun.target.position).addScaledVector(direction, -60);
-    sun.color.set(light.tint);
+    sun.color.copy(light.tint);
     sun.intensity = LIGHT_2000.sunIntensity * (1 - light.night * 1.5);
     hemi.intensity = Math.max(1.08, LIGHT_2000.hemiIntensity * (1 - light.night * 0.35));
-    hemi.color.set(light.night > 0.3 ? PALETTE.linen : LIGHT_2000.hemiSky);
+    hemi.color.set(LIGHT_2000.hemiSky).lerp(new THREE.Color(PALETTE.linen), light.night);
+    const sky = scene.background;
+    if (sky instanceof THREE.Color) {
+      sky.set(PALETTE.paper).lerp(light.tint, 0.025 + light.night * 0.05);
+    }
+    atlas.mesh.material.color
+      .set('#ffffff')
+      .lerp(light.tint, 0.045 + light.strength * 0.04)
+      .lerp(light.shade, light.night * 0.03);
+    const litCells = lampCellsAt(input, now);
     for (const [cellId, entry] of rooms) {
       const sky = entry.group.userData.windowMaterial as THREE.MeshBasicMaterial | undefined;
-      const lit =
-        input.hour >= 22 &&
-        (input.lamps.includes(cellId) || (input.hour === 23 && input.current === cellId));
-      sky?.color.set(lit ? PALETTE.light : light.tint);
+      const lit = litCells.has(cellId);
+      sky?.color.copy(lit ? new THREE.Color(PALETTE.light) : light.tint);
       if (entry.group.userData.sketchMode) {
         entry.group.traverse((object) => {
           const mesh = object as THREE.Mesh;
@@ -1121,10 +1471,11 @@ export function mountBuilding(
         });
       }
     }
-    const currentCell = CELL_BY_ID[input.current];
-    if (currentCell) {
-      section.elevatorNeedle.position.y = currentCell.floor * SECTION_PITCH.y + 1.3;
-    }
+  }
+
+  function updateLighting(input: BuildingInput, shadowChanged = false) {
+    updateHourLighting(input);
+    syncLiftDials(input.elevatorFloor);
     updateLampLights(input);
     const shadowSpan = 3 * Math.max(SECTION_PITCH.x, SECTION_PITCH.y);
     sun.shadow.camera.left = -shadowSpan / 2;
@@ -1137,16 +1488,37 @@ export function mountBuilding(
     }
   }
 
+  function updateHourTransition(now: number) {
+    const transition = hourTransition;
+    if (!transition) return;
+    updateHourLighting(currentInput, now);
+    updateLampLights(currentInput, now);
+    const litCells = lampCellsAt(currentInput, now);
+    const lampKey = [...litCells].sort().join('|');
+    if (lampKey !== transition.lastLampKey) {
+      transition.lastLampKey = lampKey;
+      refreshAtlas(undefined, litCells);
+    }
+    if (now - transition.started < (transition.reducedMotion ? transition.duration : 1500)) return;
+    hourTransition = null;
+    updateHourLighting(currentInput, now);
+    updateLampLights(currentInput, now);
+    refreshAtlas();
+  }
+
   function builtRoomIds(): Set<string> {
     if (!roomsRoot.visible || cameraFlight) return new Set();
     return new Set([...rooms].filter(([, entry]) => entry.group.visible).map(([id]) => id));
   }
 
-  function refreshAtlas(priorityCellIds?: ReadonlySet<string>) {
+  function refreshAtlas(
+    priorityCellIds?: ReadonlySet<string>,
+    lampsOverride?: ReadonlySet<string>
+  ) {
     atlas.refresh({
       focusCellId: currentInput.focus,
       visited: new Set(currentInput.visited),
-      lamps: new Set(currentInput.lamps),
+      lamps: lampsOverride ?? lampCellsAt(currentInput, animationNow()),
       hour: currentInput.hour,
       view: currentInput.view,
       builtRooms: builtRoomIds(),
@@ -1154,9 +1526,160 @@ export function mountBuilding(
     });
   }
 
+  function clearArrivalFade(cellId: string) {
+    const fade = arrivalFades.get(cellId);
+    if (!fade) return;
+    if (fade.overlay) {
+      roomsRoot.remove(fade.overlay);
+      fade.overlay.traverse((object) => {
+        const lines = object as THREE.LineSegments;
+        if (lines.isLineSegments) lines.geometry.dispose();
+      });
+    }
+    fade.materials.forEach((material) => material.dispose());
+    fade.lineMaterial?.dispose();
+    arrivalFades.delete(cellId);
+  }
+
+  function attachSketchFade(cellId: string, source: THREE.Group, fade: ArrivalFade) {
+    if (fade.overlay) return;
+    const sourceMeshes: THREE.Mesh[] = [];
+    source.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh) sourceMeshes.push(mesh);
+    });
+    const overlay = source.clone(true);
+    overlay.name = `sketch-fade-${cellId}`;
+    overlay.position.copy(source.position);
+    overlay.position.z += 0.004;
+    overlay.userData.noInk = true;
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: CHARCOAL.line,
+      transparent: true,
+      opacity: fade.opacity.value,
+      depthTest: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    fade.lineMaterial = lineMaterial;
+    const overlayMeshes: THREE.Mesh[] = [];
+    overlay.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh) overlayMeshes.push(mesh);
+    });
+    const materials = new Map<string, THREE.ShaderMaterial>();
+    sourceMeshes.forEach((sourceMesh, index) => {
+      const target = overlayMeshes[index];
+      if (!target) return;
+      const texture = sourceMesh.userData.cutout as THREE.Texture | undefined;
+      const isFigure = Boolean(texture || sourceMesh.parent?.userData.sketchFigure);
+      const color = isFigure
+        ? CHARCOAL.faint
+        : sourceMesh.userData.sketchWindow
+          ? PALETTE.paper
+          : sourceMesh.userData.sketchLamp
+            ? PALETTE.paperDeep
+            : PALETTE.linen;
+      const key = `${texture?.uuid ?? 'paper'}:${color}`;
+      let material = materials.get(key);
+      if (!material) {
+        material = new THREE.ShaderMaterial({
+          uniforms: {
+            map: { value: texture ?? null },
+            hasMap: { value: texture ? 1 : 0 },
+            color: { value: new THREE.Color(color) },
+            opacity: fade.opacity,
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D map;
+            uniform float hasMap;
+            uniform float opacity;
+            uniform vec3 color;
+            varying vec2 vUv;
+            void main() {
+              vec4 texel = vec4(1.0);
+              if (hasMap > 0.5) {
+                texel = texture2D(map, vUv);
+                if (texel.a < 0.2) discard;
+              }
+              gl_FragColor = vec4(color * texel.rgb, opacity * texel.a);
+            }
+          `,
+          transparent: true,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+        });
+        materials.set(key, material);
+        fade.materials.add(material);
+      }
+      target.material = material;
+      target.castShadow = false;
+      target.receiveShadow = false;
+      target.userData.noInk = true;
+      target.renderOrder += 10;
+      if (!sourceMesh.userData.cutout && !sourceMesh.userData.noInk && target.visible) {
+        const edges = new THREE.EdgesGeometry(target.geometry, 28);
+        if (edges.getAttribute('position').count > 0) {
+          const lines = new THREE.LineSegments(edges, lineMaterial);
+          lines.name = 'arrival-sketch-edges';
+          lines.position.copy(target.position);
+          lines.position.z += 0.004;
+          lines.quaternion.copy(target.quaternion);
+          lines.scale.copy(target.scale);
+          lines.renderOrder = target.renderOrder + 2;
+          lines.frustumCulled = false;
+          target.parent?.add(lines);
+        } else {
+          edges.dispose();
+        }
+      }
+    });
+    fade.overlay = overlay;
+    roomsRoot.add(overlay);
+  }
+
+  function beginArrivalFade(cellId: string, started: number, duration: number) {
+    const fade: ArrivalFade = {
+      started,
+      duration,
+      opacity: { value: 1 },
+      overlay: null,
+      materials: new Set(),
+      lineMaterial: null,
+    };
+    clearArrivalFade(cellId);
+    arrivalFades.set(cellId, fade);
+    atlas.fadeTile(cellId, started, duration);
+    const entry = rooms.get(cellId);
+    if (entry) attachSketchFade(cellId, entry.group, fade);
+  }
+
+  function updateArrivalFades(now: number) {
+    for (const [cellId, fade] of arrivalFades) {
+      const entry = rooms.get(cellId);
+      if (!fade.overlay && entry) attachSketchFade(cellId, entry.group, fade);
+      const progress = Math.min(1, Math.max(0, (now - fade.started) / fade.duration));
+      fade.opacity.value = 1 - progress;
+      if (fade.lineMaterial) fade.lineMaterial.opacity = fade.opacity.value;
+      if (progress >= 1) {
+        clearArrivalFade(cellId);
+      }
+    }
+  }
+
   function evictRoom(cellId: string) {
     const entry = rooms.get(cellId);
     if (!entry) return;
+    clearArrivalFade(cellId);
     roomsRoot.remove(entry.group);
     disposeGroupContents(entry.group);
     rooms.delete(cellId);
@@ -1172,7 +1695,10 @@ export function mountBuilding(
     );
     for (const [id, entry] of rooms) {
       entry.group.visible = desiredRooms.has(id);
-      updateSketchMode(entry.group, id !== input.current && !visitedSet.has(id));
+      syncCloseUpProps(entry.group, input);
+      const sketchMode = id !== input.current && !visitedSet.has(id);
+      updateSketchMode(entry.group, sketchMode);
+      if (sketchMode) resetAmbientEntry(entry);
     }
     for (const id of desiredRooms) {
       const entry = rooms.get(id);
@@ -1202,10 +1728,15 @@ export function mountBuilding(
     const [x, y, z] = cellOrigin3d(cellId);
     group.position.set(x, y, z);
     group.visible = desiredRooms.has(cellId);
+    syncCloseUpProps(group, currentInput);
     updateSketchMode(group, cellId !== currentInput.current && !currentInput.visited.includes(cellId));
     roomsRoot.add(group);
     rooms.set(cellId, { group });
     applyRestPoses(group, currentInput, cellId);
+    const arrivalFade = arrivalFades.get(cellId);
+    if (arrivalFade && animationNow() - arrivalFade.started < arrivalFade.duration) {
+      attachSketchFade(cellId, group, arrivalFade);
+    }
     const previewLockLine = currentInput.previewLockLine;
     if (
       previewLockLine &&
@@ -1234,7 +1765,7 @@ export function mountBuilding(
     cameraTween = {
       from: clonePose(currentPose),
       to: clonePose(to),
-      started: performance.now(),
+      started: animationNow(),
       duration,
     };
     cameraFlight = null;
@@ -1243,23 +1774,32 @@ export function mountBuilding(
   function startFlight(input: BuildingInput) {
     const move = input.lastMove;
     if (!move) return;
-    const path = flightPath(move.from, move.to, move.kind);
-    if (path.length < 2) return;
-    const frames = path.map((id) => frameForCell(input.view, id));
-    const duration = move.kind === 'knight' ? 1200 : 720;
+    const timeline = moveTimeline([move.from, move.to], move.kind);
+    if (timeline.keys.length < 2) return;
+    const startPose = frameForInput({ ...input, focus: move.from, closeUp: null });
+    const endPose = frameForInput({ ...input, focus: move.to, view: 'room', closeUp: null });
     const flightHeight = Math.max(
       currentPose.viewHeight,
-      frames[frames.length - 1].viewHeight * 1.75,
-      input.view === 'room' ? frames[0].viewHeight * 2.05 : frames[0].viewHeight
+      endPose.viewHeight * 1.75,
+      input.view === 'room' ? startPose.viewHeight * 2.05 : startPose.viewHeight
     );
     setKnightCell(move.from);
-    setFlightRenderMode(true);
+    if (!input.pinCamera) setFlightRenderMode(true);
     cameraFlight = {
-      path,
-      frames,
-      started: performance.now(),
-      duration,
+      keys: timeline.keys,
+      from: move.from,
+      to: move.to,
+      started: animationNow(),
+      duration: timeline.duration,
       flightHeight,
+      followOffset: startPose.target.clone().sub(new THREE.Vector3(...timeline.keys[0].pos)),
+      followVelocity: new THREE.Vector3(),
+      followTarget: startPose.target.clone(),
+      lastTime: animationNow(),
+      fromYaw: startPose.yaw,
+      fromPitch: startPose.pitch,
+      toYaw: endPose.yaw,
+      toPitch: endPose.pitch,
     };
     cameraTween = null;
     refreshAtlas(new Set(SECTION_CELL_IDS));
@@ -1269,7 +1809,7 @@ export function mountBuilding(
     }
     if (flightTimer !== null) window.clearTimeout(flightTimer);
     flightTimer = null;
-    draw();
+    if (!animationClock.manual) draw();
   }
 
   function interpolatePose(from: CameraPose, to: CameraPose, t: number): CameraPose {
@@ -1284,35 +1824,66 @@ export function mountBuilding(
   function updateCamera(now: number) {
     if (cameraFlight) {
       const flight = cameraFlight;
-      const progress = Math.min(1, (now - flight.started) / flight.duration);
-      const segmentCount = flight.path.length - 1;
-      const scaled = progress * segmentCount;
-      const segment = Math.min(segmentCount - 1, Math.floor(scaled));
-      const segmentT = progress >= 1 ? 1 : scaled - segment;
-      const fromFrame = flight.frames[segment];
-      const toFrame = flight.frames[segment + 1];
-      const eased = segmentT * segmentT * (3 - 2 * segmentT);
-      const moving = interpolatePose(fromFrame, toFrame, eased);
-      moving.viewHeight = flight.flightHeight;
-      applyCameraPose(moving);
+      const elapsed = Math.min(flight.duration, now - flight.started);
+      const progress = flight.duration === 0 ? 1 : elapsed / flight.duration;
+      let lower = 0;
+      while (lower < flight.keys.length - 2 && elapsed > flight.keys[lower + 1].t) lower += 1;
+      const fromKey = flight.keys[lower];
+      const toKey = flight.keys[lower + 1];
+      const keyT = Math.min(1, Math.max(0, (elapsed - fromKey.t) / (toKey.t - fromKey.t)));
+      const position: [number, number, number] = [
+        fromKey.pos[0] + (toKey.pos[0] - fromKey.pos[0]) * keyT,
+        fromKey.pos[1] + (toKey.pos[1] - fromKey.pos[1]) * keyT,
+        fromKey.pos[2] + (toKey.pos[2] - fromKey.pos[2]) * keyT,
+      ];
+      const hop = (fromKey.hop ?? 0) + ((toKey.hop ?? 0) - (fromKey.hop ?? 0)) * keyT;
+      knight.position.set(position[0], position[1] + hop, position[2]);
 
-      const startId = flight.path[segment];
-      const endId = flight.path[segment + 1];
-      const [x1, y1, z1] = cellOrigin3d(startId);
-      const [x2, y2, z2] = cellOrigin3d(endId);
-      const [sx1, sy1, sz1] = PLAYER_SPOT[cellScene(startId).kind];
-      const [sx2, sy2, sz2] = PLAYER_SPOT[cellScene(endId).kind];
-      const hop = Math.sin(Math.PI * segmentT) * 0.52;
-      knight.position.set(
-        x1 + sx1 + (x2 + sx2 - x1 - sx1) * eased,
-        y1 + sy1 + (y2 + sy2 - y1 - sy1) * eased + hop,
-        z1 + sz1 + (z2 + sz2 - z1 - sz1) * eased
-      );
+      if (currentInput.lastMove?.kind === 'elevator') {
+        const floor = position[1] / SECTION_PITCH.y;
+        syncLiftDials(floor, true, now);
+      }
+
+      const desiredTarget = new THREE.Vector3(...position).add(flight.followOffset);
+      const deltaSeconds = Math.min(0.1, Math.max(0, (now - flight.lastTime) / 1000));
+      if (deltaSeconds > 0) {
+        const omega = 2 / 0.16;
+        const decay = Math.exp(-omega * deltaSeconds);
+        for (const axis of ['x', 'y', 'z'] as const) {
+          const displacement = flight.followTarget[axis] - desiredTarget[axis];
+          const temp = (flight.followVelocity[axis] + omega * displacement) * deltaSeconds;
+          flight.followVelocity[axis] =
+            (flight.followVelocity[axis] - omega * temp) * decay;
+          flight.followTarget[axis] =
+            desiredTarget[axis] + (displacement + temp) * decay;
+        }
+      }
+      flight.lastTime = now;
+      const eased = progress * progress * (3 - 2 * progress);
+      if (!currentInput.pinCamera) {
+        applyCameraPose({
+          target: flight.followTarget,
+          viewHeight: flight.flightHeight,
+          yaw: flight.fromYaw + (flight.toYaw - flight.fromYaw) * eased,
+          pitch: flight.fromPitch + (flight.toPitch - flight.fromPitch) * eased,
+        });
+      }
 
       if (progress >= 1) {
+        if (pendingArrivalFade?.cellId === flight.to) {
+          beginArrivalFade(flight.to, now, pendingArrivalFade.duration);
+          pendingArrivalFade = null;
+        }
         cameraFlight = null;
-        setKnightCell(flight.path[flight.path.length - 1]);
-        addCameraTween(frameForCell(currentInput.view, currentInput.focus), 700);
+        setKnightCell(flight.to);
+        pendantLanding = { cellId: flight.to, started: now };
+        syncLiftDials(currentInput.elevatorFloor);
+        if (!currentInput.pinCamera) {
+          addCameraTween(
+            frameForInput({ ...currentInput, focus: flight.to, view: 'room', closeUp: null }),
+            450
+          );
+        }
       }
       return;
     }
@@ -1370,11 +1941,22 @@ export function mountBuilding(
       const tagSize = 30 * (sprite.userData.highlighted ? 1.3 : 1);
       let offset = 0;
       let candidate = anchor.clone();
+      if (currentInput.closeUp === 'ev-bb-puzzle' && sprite.userData.lineId === 'ev-bb-puzzle') {
+        const screenRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+        candidate.addScaledVector(screenRight, 0.56);
+        candidate.addScaledVector(screenUp, 0.3);
+      }
       let projected = screenPoint(candidate);
       let x = ((projected.x + 1) * size.width) / 2;
       let y = ((1 - projected.y) * size.height) / 2;
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        candidate = anchor.clone().addScaledVector(screenUp, offset * worldPerPixel);
+        const base = anchor.clone();
+        if (currentInput.closeUp === 'ev-bb-puzzle' && sprite.userData.lineId === 'ev-bb-puzzle') {
+          const screenRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+          base.addScaledVector(screenRight, 0.56);
+          base.addScaledVector(screenUp, 0.3);
+        }
+        candidate = base.addScaledVector(screenUp, offset * worldPerPixel);
         projected = screenPoint(candidate);
         x = ((projected.x + 1) * size.width) / 2;
         y = ((1 - projected.y) * size.height) / 2;
@@ -1525,7 +2107,12 @@ export function mountBuilding(
       return;
     }
     if (target.spec.kind === 'lean') callbacks.onCloseUp(target.hotspot.lineId);
-    const duration = target.spec.kind === 'lift' || target.spec.kind === 'flip' ? 410 : 330;
+    const duration =
+      target.spec.kind === 'lean'
+        ? 500
+        : target.spec.kind === 'lift' || target.spec.kind === 'flip'
+          ? 410
+          : 330;
     animateMechanism(target, 1, duration, () => finishInteraction(target), fromProgress);
   }
 
@@ -1542,7 +2129,7 @@ export function mountBuilding(
     cameraTween = {
       from: currentPose,
       to: parallaxStart.pose,
-      started: performance.now(),
+      started: animationNow(),
       duration: 450,
     };
     parallaxStart = null;
@@ -1557,7 +2144,7 @@ export function mountBuilding(
         if (pinchStartDistance !== null && Math.abs(distance - pinchStartDistance) > 38 && !pinchStartChanged) {
           stepView(distance > pinchStartDistance ? -1 : 1);
           pinchStartChanged = true;
-          suppressClickUntil = performance.now() + 600;
+          suppressClickUntil = animationNow() + 600;
         }
         if (pinchStartDistance === null) pinchStartDistance = distance;
       }
@@ -1695,7 +2282,7 @@ export function mountBuilding(
       const drag = activeDrag;
       activeDrag = null;
       if (drag.moved) {
-        suppressClickUntil = performance.now() + 450;
+        suppressClickUntil = animationNow() + 450;
         if (drag.progress >= 0.8) {
           animateMechanism(
             drag.target,
@@ -1711,15 +2298,15 @@ export function mountBuilding(
     }
     if (parallaxStart) {
       const moved = Math.hypot(event.clientX - parallaxStart.x, event.clientY - parallaxStart.y) > 4;
-      if (moved) suppressClickUntil = performance.now() + 350;
+      if (moved) suppressClickUntil = animationNow() + 350;
       finishParallax();
     }
   }
 
   function onClick(event: MouseEvent) {
-    if (performance.now() < suppressClickUntil) return;
+    if (animationNow() < suppressClickUntil) return;
     if (event.detail > 1) {
-      suppressClickUntil = performance.now() + 420;
+      suppressClickUntil = animationNow() + 420;
       return;
     }
     const interaction = pickedInteraction(event.clientX, event.clientY);
@@ -1751,7 +2338,7 @@ export function mountBuilding(
         return typeof lineId === 'string' ? interactionForLine(lineId) : null;
       })();
     if (!target) return;
-    suppressClickUntil = performance.now() + 400;
+    suppressClickUntil = animationNow() + 400;
     callbacks.onCloseUp(target.hotspot.lineId);
   }
 
@@ -1780,19 +2367,45 @@ export function mountBuilding(
 
   function applyInput(input: BuildingInput, animate: boolean, deferAtlas = false) {
     const previous = currentInput;
+    const previousLamps = lampCellsAt(previous, animationNow());
     currentInput = input;
+    if (previous.hour !== input.hour) {
+      const targetLamps = targetLampCells(input);
+      const lampOrder = [...targetLamps]
+        .filter((cellId) => !previousLamps.has(cellId))
+        .sort((a, b) => cellHash(a) - cellHash(b));
+      hourTransition = {
+        fromHour: previous.hour,
+        toHour: input.hour,
+        started: animationNow(),
+        duration: input.reducedMotion ? 250 : 1200,
+        fromLamps: previousLamps,
+        targetLamps,
+        lampOrder,
+        lastLampKey: [...previousLamps].sort().join('|'),
+        reducedMotion: input.reducedMotion,
+      };
+    }
+    if (input.lastMove && input.lastMove !== previous.lastMove) {
+      pendingArrivalFade =
+        input.visited.includes(input.current) && !previous.visited.includes(input.current)
+          ? { cellId: input.current, duration: input.reducedMotion ? 250 : 600 }
+          : null;
+    }
     if (previous.previewLockLine !== input.previewLockLine) previewLockTriggered = false;
     focusRoomRequired =
       detailTier(input.focus, input.focus, new Set(input.visited), input.view) === 'room';
     requestedView = input.view;
     ink.setMode(input.mode as InkMode);
+    const closeUpChanged = previous.closeUp !== input.closeUp;
     const visitedChanged = JSON.stringify(previous.visited) !== JSON.stringify(input.visited);
     const lampsChanged = JSON.stringify(previous.lamps) !== JSON.stringify(input.lamps);
     const demandChanged =
       previous.focus !== input.focus ||
       previous.current !== input.current ||
       previous.view !== input.view ||
-      visitedChanged;
+      visitedChanged ||
+      previous.elevatorFloor !== input.elevatorFloor;
     if (
       deferAtlas &&
       (demandChanged || lampsChanged || previous.hour !== input.hour)
@@ -1801,6 +2414,14 @@ export function mountBuilding(
     }
     if (demandChanged) updateRoomDemand(input);
     for (const [cellId, entry] of rooms) applyRestPoses(entry.group, input, cellId);
+    for (const [, entry] of rooms) syncCloseUpProps(entry.group, input);
+    knight.visible = !input.closeUp;
+    knight.castShadow = !input.closeUp;
+    if (closeUpChanged) {
+      shadowDirty = true;
+      renderer.shadowMap.needsUpdate = true;
+      sun.shadow.needsUpdate = true;
+    }
     if (demandChanged || lampsChanged || previous.hour !== input.hour) {
       if (!deferAtlas) refreshAtlas();
     }
@@ -1827,14 +2448,67 @@ export function mountBuilding(
   });
   resizeObserver.observe(host);
 
+  function shiftAnimationStarts(delta: number) {
+    if (cameraFlight) {
+      cameraFlight.started += delta;
+      cameraFlight.lastTime += delta;
+    }
+    if (cameraTween) cameraTween.started += delta;
+    if (hourTransition) hourTransition.started += delta;
+    if (pendantLanding) pendantLanding.started += delta;
+    mechanismTweens.forEach((tween) => (tween.started += delta));
+    objectFlights.forEach((flight) => (flight.started += delta));
+    cardFlights.forEach((flight) => (flight.started += delta));
+    arrivalFades.forEach((fade) => (fade.started += delta));
+  }
+
+  function onVisibilityChange() {
+    if (document.hidden) {
+      pausedAt = animationNow();
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (flightTimer !== null) window.clearTimeout(flightTimer);
+      flightTimer = null;
+      return;
+    }
+    if (pausedAt !== null) {
+      shiftAnimationStarts(animationNow() - pausedAt);
+      pausedAt = null;
+      lastAmbientUpdate = animationNow();
+    }
+    if (!animationClock.manual && !disposed && !frame && flightTimer === null) {
+      frame = requestAnimationFrame(draw);
+    }
+  }
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  if (document.hidden) onVisibilityChange();
+
   function draw() {
     if (disposed) return;
+    if (document.hidden) {
+      frame = 0;
+      flightTimer = null;
+      return;
+    }
+    const frameStarted = performance.now();
+    frame = 0;
     flightTimer = null;
-    const now = performance.now();
+    const now = animationNow();
     if (roomQueue.length > 0) buildOneRoom();
     const movementFrame = cameraFlight !== null || cameraTween !== null;
+    updateHourTransition(now);
+    updateArrivalFades(now);
+    atlas.updateFades(now);
     updateMechanisms(now);
+    if (lockTagHideAt !== null && now >= lockTagHideAt) {
+      disposeGroupContents(lockTagGroup);
+      lockTagHideAt = null;
+      if (lockTagTimeout !== null) window.clearTimeout(lockTagTimeout);
+      lockTagTimeout = null;
+    }
     updateCamera(now);
+    updateAmbient(now);
     if (!cameraFlight && !cameraTween && flightRenderMode) setFlightRenderMode(false);
     camera.updateMatrixWorld();
     layoutHotspots();
@@ -1849,7 +2523,7 @@ export function mountBuilding(
       !visibleReady ||
       (firstReadyMs !== null && (roomQueue.length > 0 || cameraMoving));
     const flightActive = cameraFlight !== null;
-    section.group.visible = !flightActive;
+    section.group.visible = true;
     atlas.mesh.visible = true;
     roomsRoot.visible = !cameraFlight && (focusRoomReady || firstReadyMs !== null);
     if (!cameraFlight && atlasRefreshPending) {
@@ -1864,7 +2538,7 @@ export function mountBuilding(
     }
     let rendered = false;
     if (loading) {
-      if (cameraMoving) {
+      if (cameraMoving || animationClock.manual) {
         renderer.render(scene, camera);
         rendered = true;
       }
@@ -1898,21 +2572,53 @@ export function mountBuilding(
       renderer.render(overlayScene, camera);
       renderer.autoClear = autoClear;
     }
-    if (rendered && cameraFlight) {
-      const progress = Math.min(1, (now - cameraFlight.started) / cameraFlight.duration);
-      renderer.domElement.dispatchEvent(
-        new CustomEvent('buildingflightframe', { detail: { progress } })
-      );
-    }
 
     const idle =
       roomQueue.length === 0 &&
       atlas.stats().pendingTiles === 0 &&
       !shadowDirty &&
       !cameraTween &&
-      !cameraFlight;
-    if (cameraFlight || cameraTween) {
+      !cameraFlight &&
+      !hourTransition &&
+      arrivalFades.size === 0 &&
+      !atlas.hasFades();
+    const frameTime = performance.now() - frameStarted;
+    const ambientSample =
+      currentInput.ambient &&
+      !currentInput.reducedMotion &&
+      !ambientSuppressed &&
+      !currentInput.closeUp &&
+      (currentInput.view === 'room' || currentInput.view === 'block');
+    const samples = ambientSample ? ambientOnFrames : ambientOffFrames;
+    samples.push(frameTime);
+    if (samples.length > 60) samples.shift();
+    if (ambientSample && ambientOnFrames.length >= 20) {
+      const recentMedian = medianMs(ambientOnFrames.slice(-20));
+      if (recentMedian !== null && recentMedian > 60) {
+        ambientSuppressed = true;
+        ambientSimplifiedForSession = true;
+        resetAmbient();
+        callbacks.onAmbientSimplified();
+      }
+    }
+    const transitionsActive =
+      cameraFlight !== null ||
+      cameraTween !== null ||
+      mechanismTweens.size > 0 ||
+      objectFlights.size > 0 ||
+      cardFlights.size > 0 ||
+      hourTransition !== null ||
+      arrivalFades.size > 0 ||
+      atlas.hasFades() ||
+      roomQueue.length > 0 ||
+      atlas.stats().pendingTiles > 0 ||
+      shadowDirty ||
+      firstReadyMs === null;
+    if (animationClock.manual) return;
+    if (transitionsActive) {
       flightTimer = window.setTimeout(draw, 16);
+    } else if (ambientIsActive()) {
+      flightTimer = window.setTimeout(draw, 1000 / 30);
     } else {
       frame = requestAnimationFrame(draw);
     }
@@ -1951,11 +2657,22 @@ export function mountBuilding(
       setFrustum(currentPose.viewHeight);
       camera.updateMatrixWorld();
       const framePose = frameForInput(currentInput);
-      if (!cameraFlight) addCameraTween(framePose, 600);
+      if (!cameraFlight) {
+        if (animationClock.manual) applyCameraPose(framePose);
+        else addCameraTween(framePose, 600);
+      }
+    },
+    async advance(ms) {
+      if (!animationClock.manual) throw new Error('Manual stepping requires clock=manual.');
+      if (disposed) throw new Error('The stage has been disposed.');
+      if (document.hidden) throw new Error('Cannot advance the stage while the document is hidden.');
+      animationClock.advance(ms);
+      draw();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     },
     partAt(clientX, clientY) {
       const target = pickedInteraction(clientX, clientY);
-      suppressClickUntil = performance.now() + 420;
+      suppressClickUntil = animationNow() + 420;
       const previousLine = hoveredPart?.hotspot.lineId ?? null;
       hoveredPart = target;
       const lineId = target?.hotspot.lineId ?? null;
@@ -1991,10 +2708,23 @@ export function mountBuilding(
       renderer.domElement.removeEventListener('click', onClick);
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('wheel', onWheel);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       clearOverlay(hotspotGroup);
       clearOverlay(moveGroup);
       clearOverlay(changedGroup);
       clearOverlay(hoverGroup);
+      for (const cellId of arrivalFades.keys()) clearArrivalFade(cellId);
+      if (warmedPart) {
+        warmedPart.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh || !('hoverOriginalMaterial' in mesh.userData)) return;
+          mesh.material = mesh.userData.hoverOriginalMaterial as THREE.Material | THREE.Material[];
+          delete mesh.userData.hoverOriginalMaterial;
+        });
+        warmedPart = null;
+      }
+      partHoverGroup.clear();
+      brassRimMaterial.dispose();
       atlas.dispose();
       root.remove(atlas.mesh);
       disposeGroupContents(root);
@@ -2010,7 +2740,10 @@ export function mountBuilding(
         atlasStats.pendingTiles === 0 &&
         !shadowDirty &&
         !cameraTween &&
-        !cameraFlight;
+        !cameraFlight &&
+        !hourTransition &&
+        arrivalFades.size === 0 &&
+        !atlas.hasFades();
       return {
         renderCalls: renderer.info.render.calls,
         drawCalls: renderer.info.render.calls,
@@ -2026,6 +2759,8 @@ export function mountBuilding(
         atlasDrawMs: atlasStats.drawMs,
         atlasPendingTiles: atlasStats.pendingTiles,
         roomsBuilt,
+        ambientOnMedianMs: medianMs(ambientOnFrames),
+        ambientOffMedianMs: medianMs(ambientOffFrames),
         idle,
       };
     },
@@ -2033,6 +2768,6 @@ export function mountBuilding(
 
   handle.resize(host.clientWidth || 900, host.clientHeight || 620);
   mountSetupMs = performance.now() - startedAt;
-  frame = requestAnimationFrame(draw);
+  if (!document.hidden && !animationClock.manual) frame = requestAnimationFrame(draw);
   return handle;
 }

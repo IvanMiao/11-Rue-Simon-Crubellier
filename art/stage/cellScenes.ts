@@ -53,21 +53,33 @@ export const ANCHORS: Record<string, [number, number, number]> = {
 };
 
 export const PLAYER_SPOT: Record<CellRoomKind, [x: number, y: number, z: number]> = {
-  stair: [1.3, 0.015, 1.28],
-  hall: [-1.28, 0.015, 1.2],
-  loge: [1.25, 0.015, 1.2],
-  atelier: [1.35, 0.015, 1.25],
-  sill: [1.3, 0.015, 1.2],
-  workshop: [1.32, 0.015, 1.2],
-  servant: [-1.3, 0.015, 1.2],
-  studio: [-1.3, 0.015, 1.2],
-  lab: [-1.3, 0.015, 1.2],
-  boiler: [1.3, 0.015, 1.2],
-  shop: [1.3, 0.015, 1.2],
-  archive: [-1.3, 0.015, 1.2],
-  clinamen: [1.3, 0.015, 1.2],
-  empty: [1.3, 0.015, 1.2],
+  stair: [1.38, 0.015, -0.2],
+  hall: [-1.28, 0.015, -0.2],
+  loge: [1.28, 0.015, -0.2],
+  atelier: [1.28, 0.015, -0.2],
+  sill: [1.28, 0.015, -0.2],
+  workshop: [1.28, 0.015, -0.2],
+  servant: [-1.28, 0.015, -0.2],
+  studio: [-1.28, 0.015, -0.2],
+  lab: [-1.28, 0.015, -0.2],
+  boiler: [1.28, 0.015, -0.2],
+  shop: [1.28, 0.015, -0.2],
+  archive: [-1.28, 0.015, -0.2],
+  clinamen: [1.28, 0.015, -0.2],
+  empty: [1.28, 0.015, -0.2],
 };
+
+export const PLAYER_SPOT_BY_CELL: Record<string, [x: number, y: number, z: number]> = {
+  '3:6': [1.2, 0.015, 0.7],
+  '3:1': [0, 0.015, 0.6],
+  '6:8': [1, 0.015, 0.85],
+  '8:7': [-1.12, 0.015, 0.84],
+};
+
+export function playerSpot(cellId: string): [x: number, y: number, z: number] {
+  const override = PLAYER_SPOT_BY_CELL[cellId];
+  return override ? [...override] : [...PLAYER_SPOT[cellScene(cellId).kind]];
+}
 
 export const PLAYER_SPOT_ANCHORS: Partial<Record<CellRoomKind, readonly string[]>> = {
   stair: ['ev-stair-notebook'],

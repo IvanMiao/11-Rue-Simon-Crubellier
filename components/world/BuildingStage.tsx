@@ -40,6 +40,7 @@ const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, onHandl
           onExitCloseUp: () => callbacksRef.current.onExitCloseUp(),
           getNotebookRect: () => callbacksRef.current.getNotebookRect(),
           onViewChange: (view) => callbacksRef.current.onViewChange(view),
+          onAmbientSimplified: () => callbacksRef.current.onAmbientSimplified(),
         });
         handleRef.current = handle;
         onHandleReadyRef.current(handle);

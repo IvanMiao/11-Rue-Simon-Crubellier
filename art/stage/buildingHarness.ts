@@ -8,14 +8,13 @@ import { MECHANISMS } from './mechanisms';
 
 declare global {
   interface Window {
-    __buildingReady?: boolean;
-    __buildingStats?: ReturnType<BuildingHandle['stats']>;
-    __buildingError?: string;
-    __buildingHandle?: BuildingHandle;
+    __advance?: (ms: number) => Promise<ReturnType<BuildingHandle['stats']>>;
   }
 }
 
 const params = new URLSearchParams(window.location.search);
+const manualClock = params.get('clock') === 'manual';
+const pinCamera = params.get('pinCamera') === '1';
 const mechParam = params.get('mech');
 const lockParam = params.get('lock');
 const closeUpParam = params.get('closeUp');
@@ -29,6 +28,17 @@ const viewParam = params.get('view');
 const view: SectionView = viewParam === 'block' || viewParam === 'building' ? viewParam : 'room';
 const hourParam = Number(params.get('hour'));
 const hour = ([20, 21, 22, 23].includes(hourParam) ? hourParam : 20) as BuildingInput['hour'];
+const hourToParam = Number(params.get('hourTo'));
+const previewHourTo = ([20, 21, 22, 23].includes(hourToParam)
+  ? hourToParam
+  : null) as BuildingInput['hour'] | null;
+const moveToParam = params.get('moveTo');
+const moveKindParam = params.get('moveKind');
+const previewMoveKind =
+  moveKindParam === 'walk' || moveKindParam === 'knight' || moveKindParam === 'elevator'
+    ? moveKindParam
+    : null;
+const previewMoveTo = moveToParam && CELL_BY_ID[moveToParam] ? moveToParam : null;
 const mode = params.get('mode') === 'blueprint' ? 'blueprint' : 'print';
 const visitedParam = params.get('visited');
 const visited =
@@ -37,6 +47,13 @@ const visited =
     : visitedParam === 'none' || !visitedParam
       ? []
       : visitedParam.split(',').filter((cellId) => Boolean(CELL_BY_ID[cellId]));
+const lampsParam = params.get('lamps');
+const lamps =
+  lampsParam === 'all'
+    ? CELLS.map((cell) => cell.id)
+    : lampsParam
+      ? lampsParam.split(',').filter((cellId) => Boolean(CELL_BY_ID[cellId]))
+      : [];
 const validStatuses = ['open', 'locked', 'done', 'failed'] as const;
 const statusParam = params.get('status');
 const previewStatus = validStatuses.find((status) => status === statusParam) ?? 'open';
@@ -104,12 +121,13 @@ async function mount() {
   let currentInput: BuildingInput = {
     current: focusCell,
     focus: focusCell,
+    elevatorFloor: 0,
     view: currentView,
-    closeUp: closeUpParam && MECHANISMS[closeUpParam] ? closeUpParam : null,
+    closeUp: !manualClock && closeUpParam && MECHANISMS[closeUpParam] ? closeUpParam : null,
     hour,
     mode,
     visited,
-    lamps: [],
+    lamps,
     changed: [],
     targets: targetsFor(focusCell),
     hotspots: previewHotspots(),
@@ -121,6 +139,10 @@ async function mount() {
     previewLockLine: lockParam && MECHANISMS[lockParam] ? lockParam : null,
     previewParallax,
     lastMove: null,
+    ambient: params.get('ambient') !== 'off',
+    reducedMotion: params.get('reducedMotion') === '1',
+    clockMode: manualClock ? 'manual' : 'realtime',
+    pinCamera,
   };
   const callbacks: BuildingCallbacks = {
     onPickHotspot: () => undefined,
@@ -157,28 +179,126 @@ async function mount() {
       handle?.update(currentInput);
       publishWhenIdle();
     },
+    onAmbientSimplified: () => undefined,
   };
   const { mountBuilding } = await import('./building');
   handle = mountBuilding(host, currentInput, callbacks);
-  window.__buildingHandle = handle;
-  window.__buildingReady = false;
+  const idleCallbacks: Array<() => void> = [];
+  const readyWaiters: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }> = [];
+  let ready = false;
+  let readyError: Error | null = null;
+
+  const waitUntilReady = () => {
+    if (ready) return Promise.resolve();
+    if (readyError) return Promise.reject(readyError);
+    return new Promise<void>((resolve, reject) => {
+      readyWaiters.push({ resolve, reject });
+    });
+  };
+
+  const markReady = () => {
+    if (ready) return;
+    ready = true;
+    readyWaiters.splice(0).forEach(({ resolve }) => resolve());
+    idleCallbacks.splice(0).forEach((callback) => callback());
+  };
+
+  const failReady = (error: unknown) => {
+    if (ready || readyError) return;
+    readyError = error instanceof Error ? error : new Error(String(error));
+    readyWaiters.splice(0).forEach(({ reject }) => reject(readyError!));
+  };
+
+  if (manualClock) {
+    window.__advance = async (ms) => {
+      await waitUntilReady();
+      if (!handle) throw new Error('Building stage is unavailable');
+      await handle.advance(ms);
+      return handle.stats();
+    };
+  }
 
   function publishWhenIdle() {
     const stats = handle?.stats();
     if (!stats) return;
-    window.__buildingStats = stats;
     if (stats.idle && stats.firstReadyMs !== null) {
-      window.__buildingReady = true;
+      markReady();
       return;
     }
-    window.requestAnimationFrame(publishWhenIdle);
+    if (manualClock) {
+      if (ready) return;
+      void handle?.advance(0).then(publishWhenIdle).catch((error: unknown) => {
+        failReady(error);
+      });
+    } else {
+      window.requestAnimationFrame(publishWhenIdle);
+    }
   }
   publishWhenIdle();
+  const whenIdle = (callback: () => void) => {
+    if (ready) {
+      callback();
+      return;
+    }
+    if (manualClock) {
+      idleCallbacks.push(callback);
+      return;
+    }
+    const poll = () => {
+      const stats = handle?.stats();
+      if (stats?.firstReadyMs !== null && stats?.idle) {
+        callback();
+        return;
+      }
+      window.requestAnimationFrame(poll);
+    };
+    poll();
+  };
+  if (manualClock && closeUpParam && MECHANISMS[closeUpParam]) {
+    whenIdle(() => {
+      currentInput = { ...currentInput, closeUp: closeUpParam };
+      handle?.update(currentInput);
+    });
+  }
+  if (previewHourTo !== null && previewHourTo !== hour) {
+    whenIdle(() => {
+      const updateHour = () => {
+        currentInput = { ...currentInput, hour: previewHourTo };
+        handle?.update(currentInput);
+        publishWhenIdle();
+      };
+      if (manualClock) updateHour();
+      else window.setTimeout(updateHour, 300);
+    });
+  }
+  if (previewMoveTo && previewMoveKind) {
+    whenIdle(() => {
+      currentInput = {
+        ...currentInput,
+        current: previewMoveTo,
+        focus: pinCamera ? focusCell : previewMoveTo,
+        view: pinCamera ? 'block' : 'room',
+        closeUp: null,
+        visited: Array.from(new Set([...currentInput.visited, previewMoveTo])),
+        elevatorFloor:
+          previewMoveKind === 'elevator'
+            ? (CELL_BY_ID[previewMoveTo]?.floor ?? currentInput.elevatorFloor)
+            : currentInput.elevatorFloor,
+        targets: targetsFor(previewMoveTo),
+        poseHotspotsByCell: { ...currentInput.poseHotspotsByCell, [previewMoveTo]: previewHotspots() },
+        lastMove: { from: focusCell, to: previewMoveTo, kind: previewMoveKind },
+      };
+      handle?.update(currentInput);
+      if (!manualClock) publishWhenIdle();
+    });
+  }
 }
 
 void mount().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  window.__buildingError = message;
   const errorNode = document.getElementById('building-error');
   if (errorNode) {
     errorNode.textContent = `纸剧场无法打开：${message}`;

@@ -105,6 +105,14 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.building-view-tabs .motion-switch {
+  border-style: dashed;
+  font-size: 0.68rem;
+  padding-inline: 0.48rem;
+}
+.building-view-tabs .motion-switch[aria-pressed="false"] {
+  opacity: 0.72;
+}
 .building-hour-caption {
   position: absolute;
   z-index: 3;

@@ -334,6 +334,7 @@ function addClinamen(parent: THREE.Group) {
 export interface BuildingSection {
   group: THREE.Group;
   elevatorNeedle: THREE.Mesh;
+  elevatorCage: THREE.Group;
 }
 
 export function buildBuildingSection(): BuildingSection {
@@ -463,10 +464,33 @@ export function buildBuildingSection(): BuildingSection {
     new THREE.BoxGeometry(0.92, 0.09, 0.09),
     toonMaterial(PALETTE.brass)
   );
-  elevatorNeedle.position.set(liftX, 1.3, -0.76);
+  elevatorNeedle.position.set(liftX, 1.3, CELL_ROOM.D / 2 + 0.22);
   elevatorNeedle.name = 'elevator-needle';
   elevatorNeedle.castShadow = true;
   group.add(elevatorNeedle);
+  const elevatorCage = new THREE.Group();
+  elevatorCage.name = 'elevator-cage';
+  elevatorCage.position.set(liftX, 0, CELL_ROOM.D / 2 + 0.12);
+  const ironwork: BoxSpec[] = [
+    { w: 0.88, h: 0.08, d: 0.82, x: 0, y: 0.04, z: 0 },
+    { w: 0.88, h: 0.055, d: 0.055, x: 0, y: 2.52, z: 0.38 },
+    { w: 0.055, h: 2.48, d: 0.055, x: -0.42, y: 1.27, z: 0.38 },
+    { w: 0.055, h: 2.48, d: 0.055, x: 0.42, y: 1.27, z: 0.38 },
+    { w: 0.055, h: 2.48, d: 0.055, x: -0.42, y: 1.27, z: -0.38 },
+    { w: 0.055, h: 2.48, d: 0.055, x: 0.42, y: 1.27, z: -0.38 },
+    { w: 0.045, h: 2.42, d: 0.045, x: -0.3, y: 1.27, z: 0.38 },
+    { w: 0.045, h: 2.42, d: 0.045, x: 0.3, y: 1.27, z: 0.38 },
+    { w: 0.88, h: 0.045, d: 0.045, x: 0, y: 0.24, z: 0.38 },
+    { w: 0.88, h: 0.045, d: 0.045, x: 0, y: 2.3, z: 0.38 },
+  ];
+  mergedBoxes(elevatorCage, ironwork, PALETTE.ink, true);
+  const brasswork: BoxSpec[] = [
+    { w: 0.94, h: 0.07, d: 0.07, x: 0, y: 0.12, z: 0.42 },
+    { w: 0.94, h: 0.07, d: 0.07, x: 0, y: 2.42, z: 0.42 },
+    { w: 0.035, h: 2.2, d: 0.05, x: 0, y: 1.27, z: 0.43 },
+  ];
+  mergedBoxes(elevatorCage, brasswork, PALETTE.brass);
+  group.add(elevatorCage);
 
   addRoof(group);
   addStreet(group);
@@ -506,5 +530,5 @@ export function buildBuildingSection(): BuildingSection {
   mergedBoxes(group, hatch, PALETTE.castFloorTaupe, true);
   addClinamen(group);
 
-  return { group, elevatorNeedle };
+  return { group, elevatorNeedle, elevatorCage };
 }

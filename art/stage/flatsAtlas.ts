@@ -31,6 +31,9 @@ export interface FlatsAtlas {
   texture: THREE.CanvasTexture;
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   refresh(input: FlatsAtlasInput): boolean;
+  fadeTile(cellId: string, started: number, duration: number): boolean;
+  updateFades(now: number): boolean;
+  hasFades(): boolean;
   stats(): { drawMs: number; pendingTiles: number };
   dispose(): void;
 }
@@ -612,6 +615,11 @@ export function createFlatsAtlas(initial: FlatsAtlasInput): FlatsAtlas {
 
   const rendered = new Map<string, string>();
   const tileCache = new Map<string, HTMLCanvasElement>();
+  const fades = new Map<string, {
+    mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+    started: number;
+    duration: number;
+  }>();
   const layouts = furnitureLayouts();
   let latestInput = initial;
   let pendingTiles: string[] = [];
@@ -704,6 +712,92 @@ export function createFlatsAtlas(initial: FlatsAtlasInput): FlatsAtlas {
     idleHandle = null;
   }
 
+  function fadeTile(cellId: string, started: number, duration: number): boolean {
+    const cell = CELL_BY_ID[cellId];
+    if (!cell) return false;
+    let tileCanvas = [...tileCache.entries()]
+      .reverse()
+      .find(([key]) => key.startsWith(`${cellId}:`) && key.includes(':sketch:'))?.[1];
+    if (!tileCanvas) {
+      tileCanvas = document.createElement('canvas');
+      tileCanvas.width = TILE_DRAW_SIZE;
+      tileCanvas.height = TILE_DRAW_SIZE;
+      const tileContext = tileCanvas.getContext('2d');
+      if (!tileContext) return false;
+      const lit = latestInput.hour >= 22 && latestInput.lamps.has(cellId);
+      const sketchKey = `${cellId}:sketch:sketch:${latestInput.hour}:${lit ? 1 : 0}`;
+      const drawStarted = performance.now();
+      drawTile(tileContext, cellId, 'sketch', lit, latestInput.hour, layouts);
+      drawMs += performance.now() - drawStarted;
+      tileCache.set(sketchKey, tileCanvas);
+      while (tileCache.size > 120) {
+        const oldest = tileCache.keys().next().value;
+        if (oldest === undefined) break;
+        tileCache.delete(oldest);
+      }
+    }
+    const previous = fades.get(cellId);
+    if (previous) {
+      mesh.remove(previous.mesh);
+      previous.mesh.geometry.dispose();
+      previous.mesh.material.map?.dispose();
+      previous.mesh.material.dispose();
+    }
+    const [x, y, z] = cellOrigin3d(cellId);
+    const zPlane = z - 1.625;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(
+        [
+          x - 1.7, y, zPlane,
+          x + 1.7, y, zPlane,
+          x - 1.7, y + 3, zPlane,
+          x + 1.7, y + 3, zPlane,
+        ],
+        3
+      )
+    );
+    geometry.setAttribute(
+      'uv',
+      new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 1, 1], 2)
+    );
+    geometry.setIndex([0, 1, 2, 2, 1, 3]);
+    const tileTexture = new THREE.CanvasTexture(tileCanvas);
+    tileTexture.colorSpace = THREE.SRGBColorSpace;
+    const fadeMesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({
+        map: tileTexture,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      })
+    );
+    fadeMesh.name = `flat-tile-fade-${cellId}`;
+    fadeMesh.renderOrder = -1;
+    mesh.add(fadeMesh);
+    fades.set(cellId, { mesh: fadeMesh, started, duration });
+    return true;
+  }
+
+  function updateFades(now: number): boolean {
+    for (const [cellId, fade] of fades) {
+      const progress = Math.min(1, Math.max(0, (now - fade.started) / fade.duration));
+      fade.mesh.material.opacity = 1 - progress;
+      if (progress < 1) continue;
+      mesh.remove(fade.mesh);
+      fade.mesh.geometry.dispose();
+      fade.mesh.material.map?.dispose();
+      fade.mesh.material.dispose();
+      fades.delete(cellId);
+    }
+    return fades.size > 0;
+  }
+
   function scheduleIdleWork(expectedGeneration: number) {
     if (disposed || idleHandle !== null || pendingTiles.length === 0) return;
     const run = (deadline?: { timeRemaining(): number; didTimeout: boolean }) => {
@@ -755,6 +849,9 @@ export function createFlatsAtlas(initial: FlatsAtlasInput): FlatsAtlas {
     texture,
     mesh,
     refresh,
+    fadeTile,
+    updateFades,
+    hasFades: () => fades.size > 0,
     stats() {
       return { drawMs, pendingTiles: pendingTiles.length };
     },
@@ -762,6 +859,13 @@ export function createFlatsAtlas(initial: FlatsAtlasInput): FlatsAtlas {
       disposed = true;
       generation += 1;
       cancelScheduledWork();
+      for (const fade of fades.values()) {
+        mesh.remove(fade.mesh);
+        fade.mesh.geometry.dispose();
+        fade.mesh.material.map?.dispose();
+        fade.mesh.material.dispose();
+      }
+      fades.clear();
       mesh.geometry.dispose();
       material.dispose();
       texture.dispose();

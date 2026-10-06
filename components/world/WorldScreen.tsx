@@ -77,6 +77,18 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   const [viewing, setViewing] = useState<string | null>(null);
   const [sectionView, setSectionView] = useState<SectionView>('room');
   const [closeUp, setCloseUp] = useState<string | null>(null);
+  const [ambientEnabled, setAmbientEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem('building:ambient') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const [reducedMotion, setReducedMotion] = useState(() =>
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
   const [trayOpen, setTrayOpen] = useState(false);
   const [arrivals, setArrivals] = useState<Arrival[]>([]);
   const [caption, setCaption] = useState<{ title: string; text: string } | null>(null);
@@ -90,6 +102,15 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   const lastSourceLine = useRef<string | null>(null);
 
   const state = frozen || liveState;
+  const elevatorFloorKey = `building:elevator-floor:${state.runSeed}`;
+  const [elevatorFloor, setElevatorFloor] = useState(() => {
+    if (typeof window === 'undefined') return 0;
+    if (state.lastMoveKind === 'elevator' && state.currentRoomId) {
+      return CELL_BY_ID[state.currentRoomId]?.floor ?? 0;
+    }
+    const stored = Number(window.localStorage.getItem(elevatorFloorKey));
+    return Number.isInteger(stored) && stored >= -1 && stored <= 8 ? stored : 0;
+  });
   const current = state.currentRoomId;
   const shownCell = viewing && state.visitedRooms[viewing] ? viewing : current;
   const playerCoatTone = coatToneFor(state.character?.archetype);
@@ -99,6 +120,23 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     const id = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(id);
   }, [toast]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('building:ambient', ambientEnabled ? 'on' : 'off');
+    } catch {
+      return;
+    }
+  }, [ambientEnabled]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setReducedMotion(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
 
   useEffect(() => {
     if (isCaseOpen) {
@@ -195,6 +233,11 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
         const moved = events.find((event) => event.type === 'moved');
         if (moved?.type === 'moved') {
           setLastMove({ from: moved.from || moved.to, to: moved.to, kind: moved.kind });
+          if (moved.kind === 'elevator') {
+            const floor = CELL_BY_ID[moved.to]?.floor ?? 0;
+            setElevatorFloor(floor);
+            window.localStorage.setItem(elevatorFloorKey, String(floor));
+          }
           setViewing(null);
           setSectionView('room');
           setCloseUp(null);
@@ -311,6 +354,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   const sectionInput = useMemo<BuildingInput>(() => ({
     current,
     focus: shownCell || current,
+    elevatorFloor,
     view: sectionView,
     closeUp,
     hour: hourOf(state.minutesPastEight),
@@ -325,9 +369,12 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     highlight: viewing ? null : highlightedLineId,
     armedLineId: armed,
     lastMove,
+    ambient: ambientEnabled,
+    reducedMotion,
   }), [
     current,
     shownCell,
+    elevatorFloor,
     sectionView,
     closeUp,
     state.minutesPastEight,
@@ -343,6 +390,8 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     viewing,
     highlightedLineId,
     lastMove,
+    ambientEnabled,
+    reducedMotion,
   ]);
   const buildingCallbacks = useMemo<BuildingCallbacks>(() => ({
     onPickHotspot: (lineId) => {
@@ -361,7 +410,8 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
       setCloseUp(null);
       setSectionView(view);
     },
-  }), [sheet, viewing, check, onLine, onSelectCell]);
+    onAmbientSimplified: () => setToast('动态已简化'),
+  }), [sheet, viewing, check, onLine, onSelectCell, setToast]);
   const getPartAt = useCallback(
     (clientX: number, clientY: number) => buildingHandleRef.current?.partAt(clientX, clientY) ?? null,
     []
@@ -457,6 +507,14 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
                 )}
               </>
             )}
+            <button
+              type="button"
+              className="motion-switch"
+              aria-pressed={ambientEnabled}
+              onClick={() => setAmbientEnabled((enabled) => !enabled)}
+            >
+              动态 {ambientEnabled ? '开' : '关'}
+            </button>
           </div>
           {caption && (
             <div className="building-hour-caption" key={caption.title}>

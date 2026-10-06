@@ -9,6 +9,7 @@ import {
   CELL_ROOM,
   PLAYER_SPOT,
   cellScene,
+  playerSpot,
 } from './cellScenes';
 
 const sceneCells = [...CASE_ROOM_IDS, CLINAMEN_CELL];
@@ -57,6 +58,26 @@ for (const kind of kinds) {
   for (const [anchorId, anchor] of Object.entries(ANCHORS)) {
     const distance = Math.hypot(x - anchor[0], y - anchor[1], z - anchor[2]);
     assert.ok(distance >= 0.45, `${kind} player spot overlaps ${anchorId} at ${distance}`);
+  }
+}
+
+const seededGraph = buildCase(1);
+for (const cellId of CASE_ROOM_IDS) {
+  const [x, y, z] = playerSpot(cellId);
+  const lines = seededGraph.evidence.filter((line) => line.roomId === cellId);
+  for (const line of lines) {
+    const anchor = ANCHORS[line.id];
+    if (!anchor) continue;
+    const distance = Math.hypot(x - anchor[0], y - anchor[1], z - anchor[2]);
+    assert.ok(distance >= 0.45, `${cellId} player spot overlaps ${line.id} at ${distance}`);
+  }
+  const item = CASE_ITEMS.find((candidate) => candidate.roomId === cellId);
+  if (item) {
+    const anchor = ANCHORS[item.id];
+    if (anchor) {
+      const distance = Math.hypot(x - anchor[0], y - anchor[1], z - anchor[2]);
+      assert.ok(distance >= 0.45, `${cellId} player spot overlaps ${item.id} at ${distance}`);
+    }
   }
 }
 
