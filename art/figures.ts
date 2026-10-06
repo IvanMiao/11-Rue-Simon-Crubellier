@@ -9,8 +9,11 @@ import { withPaperBorder } from './draw/paperBorder';
 /** World height of the whole figure canvas: a build.height = 1 resident stands 1.72 m. */
 export const FIGURE_WORLD_H = 2.06;
 
-export function figureCanvas(m: CastMember): HTMLCanvasElement {
-  const raw = canvas(FIGURE_W, FIGURE_H, (ctx) => drawFigure(ctx, m));
+export function figureCanvas(
+  m: CastMember,
+  options: { hideFrontHand?: boolean } = {}
+): HTMLCanvasElement {
+  const raw = canvas(FIGURE_W, FIGURE_H, (ctx) => drawFigure(ctx, m, options));
   return withPaperBorder(raw, LINE.cutoutBorderPx * 1.6);
 }
 

@@ -8,19 +8,22 @@ import type {
 interface BuildingStageProps {
   input: BuildingInput;
   callbacks: BuildingCallbacks;
+  onHandleReady: (handle: BuildingHandle | null) => void;
   fallback: React.ReactNode;
 }
 
-const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, fallback }) => {
+const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, onHandleReady, fallback }) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<BuildingHandle | null>(null);
   const inputRef = useRef(input);
   const callbacksRef = useRef(callbacks);
+  const onHandleReadyRef = useRef(onHandleReady);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
 
   inputRef.current = input;
   callbacksRef.current = callbacks;
+  onHandleReadyRef.current = onHandleReady;
 
   useEffect(() => {
     let active = true;
@@ -28,12 +31,18 @@ const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, fallbac
     import('../../art/stage/building')
       .then(({ mountBuilding }) => {
         if (!active || !hostRef.current) return;
-        handleRef.current = mountBuilding(hostRef.current, inputRef.current, {
+        const handle = mountBuilding(hostRef.current, inputRef.current, {
           onPickHotspot: (lineId) => callbacksRef.current.onPickHotspot(lineId),
           onPickCell: (cellId) => callbacksRef.current.onPickCell(cellId),
           onHoverCell: (cellId) => callbacksRef.current.onHoverCell(cellId),
+          onHoverLine: (lineId) => callbacksRef.current.onHoverLine(lineId),
+          onCloseUp: (lineId) => callbacksRef.current.onCloseUp(lineId),
+          onExitCloseUp: () => callbacksRef.current.onExitCloseUp(),
+          getNotebookRect: () => callbacksRef.current.getNotebookRect(),
           onViewChange: (view) => callbacksRef.current.onViewChange(view),
         });
+        handleRef.current = handle;
+        onHandleReadyRef.current(handle);
         const revealWhenRendered = () => {
           if (!active) return;
           const handle = handleRef.current;
@@ -53,6 +62,7 @@ const BuildingStage: React.FC<BuildingStageProps> = ({ input, callbacks, fallbac
       cancelAnimationFrame(revealFrame);
       handleRef.current?.dispose();
       handleRef.current = null;
+      onHandleReadyRef.current(null);
     };
   }, []);
 

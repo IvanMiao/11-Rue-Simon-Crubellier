@@ -129,6 +129,20 @@
   left: 1rem;
   bottom: 0.9rem;
 }
+.notebook-casefile-link {
+  position: absolute;
+  z-index: 2;
+  top: -0.42rem;
+  right: -2.25rem;
+  padding: 0.28rem 0.42rem;
+  border: 1px solid color-mix(in srgb, var(--ink) 48%, transparent);
+  border-bottom-width: 2px;
+  background: var(--linen);
+  color: var(--ink);
+  box-shadow: 2px 3px 0 color-mix(in srgb, var(--ink) 22%, transparent);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
 .building-legend {
   position: absolute;
   z-index: 3;
@@ -270,7 +284,27 @@
 .notebook-tab.is-new { animation: notebook-in 900ms cubic-bezier(.2, .9, .2, 1.2); }
 @keyframes notebook-in { 0% { transform: translate(40vw, -40vh) rotate(-30deg) scale(1.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
 .card-arrival { animation: card-fly 4.2s ease-in-out forwards; }
-@keyframes card-fly { 0% { opacity: 0; transform: translate(30vw, -30vh) rotate(8deg); } 14% { opacity: 1; transform: translate(0, 0) rotate(-2deg); } 82% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(16px) scale(0.9); } }
+@keyframes card-fly { 0% { opacity: 0; transform: translate(var(--arrival-x, 30vw), var(--arrival-y, -30vh)) rotate(8deg); } 14% { opacity: 1; transform: translate(0, 0) rotate(-2deg); } 82% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(16px) scale(0.9); } }
+.card-tray-layer { position: absolute; z-index: 8; left: 0; bottom: calc(100% + 0.55rem); width: min(34rem, 82vw); }
+.card-tray { padding: 0.55rem 0.65rem 0.7rem; border: 1px solid var(--ink); background: var(--linen); color: var(--ink); box-shadow: 4px 5px 0 rgba(28, 26, 25, 0.35); transform: rotate(-0.4deg); }
+.card-tray-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.35rem; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--charcoal-faint); }
+.card-tray-heading button { padding: 0.18rem 0.34rem; border: 1px solid color-mix(in srgb, var(--ink) 40%, transparent); background: var(--paper); color: var(--ink); font-size: 9px; letter-spacing: 0; }
+.card-tray-fan { display: flex; align-items: end; gap: 0.24rem; overflow-x: auto; padding: 0.25rem 0.25rem 0.1rem; }
+.card-tray-card { display: flex; flex: 0 0 4.1rem; min-height: 5.45rem; flex-direction: column; align-items: center; gap: 0.18rem; padding: 0.28rem 0.24rem; background: var(--paper); border: 1px solid color-mix(in srgb, var(--ink) 48%, transparent); box-shadow: 2px 2px 0 color-mix(in srgb, var(--ink) 18%, transparent); color: var(--ink); font-family: var(--serif); font-size: 9px; line-height: 1.15; cursor: grab; transition: transform 130ms ease, box-shadow 130ms ease; }
+.card-tray-card img { width: 2.2rem; height: 2.2rem; object-fit: contain; }
+.card-tray-card span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.card-tray-card:hover { transform: translateY(-5px) rotate(0deg) !important; }
+.card-tray-card.is-dragging { opacity: 0.35; }
+.card-tray-ghost { position: fixed; z-index: 80; display: flex; width: 4.5rem; flex-direction: column; align-items: center; gap: 0.15rem; padding: 0.25rem; border: 1px solid var(--ink); background: var(--paper); box-shadow: 3px 4px 0 rgba(28, 26, 25, 0.32); color: var(--ink); font-family: var(--serif); font-size: 10px; pointer-events: none; transform: translate(-50%, -55%) rotate(3deg); }
+.card-tray-ghost img { width: 3.5rem; height: 3.5rem; }
+.card-drop-tag, .card-combine-choice { position: fixed; z-index: 81; padding: 0.28rem 0.5rem; border: 1px solid var(--ink); background: var(--linen); color: var(--ink); box-shadow: 2px 3px 0 rgba(28, 26, 25, 0.28); font-family: var(--mono); font-size: 11px; pointer-events: none; }
+.card-drop-tag { transform: rotate(-2deg); }
+.card-drop-tag.is-nothing { background: var(--paper-deep); }
+.card-combine-choice { display: flex; min-width: 11rem; flex-direction: column; gap: 0.3rem; padding: 0.5rem; pointer-events: auto; }
+.card-combine-choice > span { font-size: 10px; }
+.card-combine-choice button { display: flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.4rem; border: 1px solid color-mix(in srgb, var(--ink) 28%, transparent); background: var(--paper); color: var(--ink); font-family: var(--serif); font-size: 11px; text-align: left; }
+.card-combine-choice img { width: 1.8rem; height: 1.8rem; }
+.card-combine-choice .card-combine-cancel { justify-content: center; background: transparent; font-family: var(--mono); }
 
 .hud-strip { display: flex; align-items: center; gap: 1rem; color: var(--linen); font-family: var(--mono); font-size: 12px; }
 .hud-clock { display: flex; align-items: center; gap: 0.5rem; }

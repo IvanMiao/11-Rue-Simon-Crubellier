@@ -13,12 +13,19 @@ import {
   roomSignals,
   type SheetLine,
 } from '../../engine/selectors';
-import type { BuildingCallbacks, BuildingInput, StageHotspot } from '../../art/stage/building';
+import type {
+  BuildingCallbacks,
+  BuildingHandle,
+  BuildingInput,
+  StageHotspot,
+} from '../../art/stage/building';
+import { MECHANISMS } from '../../art/stage/mechanisms';
 import type { SectionView } from '../../art/stage/sectionLayout';
 import DamierCanvas, { type Hour, type MoveTarget } from './DamierCanvas';
 import RoomPage, { type PendingLineCheck } from './RoomPage';
 import Notebook, { type Arrival } from './Notebook';
 import BuildingStage from './BuildingStage';
+import CardTray from './CardTray';
 
 interface WorldScreenProps {
   state: PlayerState;
@@ -60,11 +67,17 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   onReset,
 }) => {
   const [frozen, setFrozen] = useState<PlayerState | null>(null);
-  const [pending, setPending] = useState<{ before: PlayerState; events: GameEvent[] } | null>(null);
+  const [pending, setPending] = useState<{
+    before: PlayerState;
+    events: GameEvent[];
+    lineId: string | null;
+  } | null>(null);
   const [check, setCheck] = useState<PendingLineCheck | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const [sectionView, setSectionView] = useState<SectionView>('room');
+  const [closeUp, setCloseUp] = useState<string | null>(null);
+  const [trayOpen, setTrayOpen] = useState(false);
   const [arrivals, setArrivals] = useState<Arrival[]>([]);
   const [caption, setCaption] = useState<{ title: string; text: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -72,6 +85,9 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   const [highlightedLineId, setHighlightedLineId] = useState<string | null>(null);
   const [lastMove, setLastMove] = useState<{ from: string; to: string; kind: 'walk' | 'knight' | 'elevator' } | null>(null);
   const arrivalSeq = useRef(0);
+  const notebookRef = useRef<HTMLDivElement>(null);
+  const buildingHandleRef = useRef<BuildingHandle | null>(null);
+  const lastSourceLine = useRef<string | null>(null);
 
   const state = frozen || liveState;
   const current = state.currentRoomId;
@@ -85,6 +101,23 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   }, [toast]);
 
   useEffect(() => {
+    if (isCaseOpen) {
+      setCloseUp(null);
+      setTrayOpen(false);
+    }
+  }, [isCaseOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setCloseUp(null);
+      setTrayOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  useEffect(() => {
     if (!check?.rolling) return;
     const tick = window.setInterval(() => setCheck((c) => (c ? { ...c, tick: c.tick + 1 } : c)), 80);
     const stop = window.setTimeout(() => setCheck((c) => (c ? { ...c, rolling: false } : c)), 950);
@@ -94,13 +127,30 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     };
   }, [check?.rolling]);
 
-  const settle = useCallback((before: PlayerState, events: GameEvent[], after: PlayerState) => {
+  const settle = useCallback(
+    (before: PlayerState, events: GameEvent[], after: PlayerState, sourceLineId: string | null = null) => {
     const had = new Set(before.case?.cards || []);
     const fresh = (after.case?.cards || []).filter((id) => !had.has(id));
     if (fresh.length) {
-      const items = fresh.map((cardId) => ({ key: `a${arrivalSeq.current++}`, cardId, footnote: footnoteFor(after, cardId) }));
-      setArrivals((list) => [...list, ...items].slice(-4));
-      window.setTimeout(() => setArrivals((list) => list.filter((a) => !items.some((i) => i.key === a.key))), 4300);
+      const addArrival = (cardId: string, from?: { x: number; y: number }) => {
+        const item = {
+          key: `a${arrivalSeq.current++}`,
+          cardId,
+          footnote: footnoteFor(after, cardId),
+          from,
+        };
+        setArrivals((list) => [...list, item].slice(-4));
+        window.setTimeout(
+          () => setArrivals((list) => list.filter((arrival) => arrival.key !== item.key)),
+          4300
+        );
+      };
+      const rect = notebookRef.current?.getBoundingClientRect();
+      if (sourceLineId && rect && buildingHandleRef.current) {
+        buildingHandleRef.current.animateCards(sourceLineId, fresh, rect, addArrival);
+      } else {
+        fresh.forEach((cardId) => addArrival(cardId));
+      }
     }
     if (!before.case?.notebook && after.case?.notebook) {
       setNotebookNew(true);
@@ -109,6 +159,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     for (const event of events) {
       if (event.type === 'hourTurned') setCaption({ title: `${event.title} · ${event.hour}:00`, text: event.text });
       if (event.type === 'rejected') setToast(event.reason);
+      if (event.type === 'combined' && event.recipeId === null) setToast(event.text);
       if (event.type === 'groupLocked') setToast('这一组对上了。');
       if (event.type === 'groupRejected') setToast('对不上。至少有一格错了。意志 −1');
       if (event.type === 'knightTour') setToast(`骑士连跳 ${event.chain} 格。意志 +1`);
@@ -122,7 +173,7 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
       const rolled = events.find((e) => e.type === 'checkRolled');
       if (rolled?.type === 'checkRolled' && lineId) {
         setFrozen(before);
-        setPending({ before, events });
+        setPending({ before, events, lineId });
         setCheck({ lineId, result: rolled.result, rolling: true, tick: 0 });
         return;
       }
@@ -140,11 +191,14 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
       const events = act(action, lineId);
       if (events) {
         lastEvents.current = events;
+        lastSourceLine.current = lineId ?? null;
         const moved = events.find((event) => event.type === 'moved');
         if (moved?.type === 'moved') {
           setLastMove({ from: moved.from || moved.to, to: moved.to, kind: moved.kind });
           setViewing(null);
           setSectionView('room');
+          setCloseUp(null);
+          setTrayOpen(false);
         }
       }
     },
@@ -153,15 +207,16 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
   useEffect(() => {
     if (frozen) return;
     if (lastSettled.current !== liveState) {
-      settle(lastSettled.current, lastEvents.current, liveState);
+      settle(lastSettled.current, lastEvents.current, liveState, lastSourceLine.current);
       lastSettled.current = liveState;
       lastEvents.current = [];
+      lastSourceLine.current = null;
     }
   }, [liveState, frozen, settle]);
 
   const finishCheck = () => {
     if (!pending) return;
-    settle(pending.before, pending.events, liveState);
+    settle(pending.before, pending.events, liveState, pending.lineId);
     lastSettled.current = liveState;
     setPending(null);
     setCheck(null);
@@ -196,22 +251,27 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     if (frozen) return;
     if (targets[cellId]) {
       setViewing(null);
+      setCloseUp(null);
+      setTrayOpen(false);
       dispatchAndRecord({ type: 'move', roomId: cellId });
       return;
     }
     if (cellId === current) {
       setViewing(null);
+      setCloseUp(null);
       return;
     }
     if (state.visitedRooms[cellId]) {
       setViewing(cellId);
+      setCloseUp(null);
+      setTrayOpen(false);
       return;
     }
     setToast(cellId === CLINAMEN_CELL ? '这一格被咬掉了。骑士跳不进去。' : `${cellTitle(cellId)} 现在走不到。`);
   };
 
   const onLine = (line: SheetLine) => {
-    if (line.kind === 'item') dispatchAndRecord({ type: 'collect', itemId: line.id });
+    if (line.kind === 'item') dispatchAndRecord({ type: 'collect', itemId: line.id }, line.id);
     else dispatchAndRecord({ type: 'interact', interactionId: line.id }, line.id);
   };
   const titleForCell = useCallback((id: string) => {
@@ -221,14 +281,38 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     const kind = target?.kind === 'knight' ? '骑士跳' : target?.kind === 'elevator' ? '电梯' : '走过去';
     return `${head}${cellTitle(id)}${target ? ` · ${kind} ${target.minutes} 分钟` : ''}`;
   }, [targets]);
-  const hotspots = useMemo<StageHotspot[]>(() => {
-    if (!sheet || viewing) return [];
-    return sheet.lines.map((line) => ({ lineId: line.id, status: line.status, kind: line.kind }));
-  }, [sheet, viewing]);
+  const poseHotspots = useMemo<StageHotspot[]>(() => {
+    if (!sheet) return [];
+    return sheet.lines.map((line) => ({
+      lineId: line.id,
+      status: line.status,
+      kind: line.kind,
+      lock: line.lock,
+      yielded: line.yielded,
+    }));
+  }, [sheet]);
+  const poseHotspotsByCell = useMemo(
+    () =>
+      Object.fromEntries(
+        [...new Set(Object.values(MECHANISMS).map((spec) => spec.cellId))].map((cellId) => [
+          cellId,
+          roomSheet(state, cellId).lines.map((line) => ({
+            lineId: line.id,
+            status: line.status,
+            kind: line.kind,
+            lock: line.lock,
+            yielded: line.yielded,
+          })),
+        ])
+      ),
+    [state]
+  );
+  const hotspots = viewing ? [] : poseHotspots;
   const sectionInput = useMemo<BuildingInput>(() => ({
     current,
     focus: shownCell || current,
     view: sectionView,
+    closeUp,
     hour: hourOf(state.minutesPastEight),
     mode: isCaseOpen ? 'blueprint' : 'print',
     visited: Array.from(visited),
@@ -236,12 +320,16 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     changed: Array.from(changed),
     targets,
     hotspots,
+    poseHotspots,
+    poseHotspotsByCell,
     highlight: viewing ? null : highlightedLineId,
+    armedLineId: armed,
     lastMove,
   }), [
     current,
     shownCell,
     sectionView,
+    closeUp,
     state.minutesPastEight,
     isCaseOpen,
     visited,
@@ -249,6 +337,9 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     changed,
     targets,
     hotspots,
+    poseHotspots,
+    poseHotspotsByCell,
+    armed,
     viewing,
     highlightedLineId,
     lastMove,
@@ -262,8 +353,38 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
     },
     onPickCell: onSelectCell,
     onHoverCell: () => undefined,
-    onViewChange: setSectionView,
+    onHoverLine: setHighlightedLineId,
+    onCloseUp: setCloseUp,
+    onExitCloseUp: () => setCloseUp(null),
+    getNotebookRect: () => notebookRef.current?.getBoundingClientRect() ?? null,
+    onViewChange: (view) => {
+      setCloseUp(null);
+      setSectionView(view);
+    },
   }), [sheet, viewing, check, onLine, onSelectCell]);
+  const getPartAt = useCallback(
+    (clientX: number, clientY: number) => buildingHandleRef.current?.partAt(clientX, clientY) ?? null,
+    []
+  );
+  const onCombineCards = useCallback(
+    (dragged: string, other: string, lineId: string) =>
+      dispatchAndRecord({ type: 'combine', a: dragged, b: other }, lineId),
+    [dispatchAndRecord]
+  );
+  const onWobblePart = useCallback((lineId: string) => {
+    buildingHandleRef.current?.wobblePart(lineId);
+  }, []);
+  const onDropTarget = useCallback((lineId: string | null) => {
+    if (lineId === null) buildingHandleRef.current?.partAt(-1, -1);
+  }, []);
+  const canDropCards =
+    Boolean(state.case?.notebook) &&
+    !isCaseOpen &&
+    !check &&
+    !frozen &&
+    !viewing &&
+    shownCell === current &&
+    sectionView === 'room';
 
   return (
     <div className="world-desk h-screen w-screen overflow-hidden flex flex-col">
@@ -290,6 +411,9 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
           <BuildingStage
             input={sectionInput}
             callbacks={buildingCallbacks}
+            onHandleReady={(handle) => {
+              buildingHandleRef.current = handle;
+            }}
             fallback={
               <DamierCanvas
                 cells={CELLS}
@@ -309,23 +433,29 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
             }
           />
           <div className="building-view-tabs" role="group" aria-label="剖面视图">
-            {([
-              ['room', '近'],
-              ['block', '邻'],
-              ['building', '全楼'],
-            ] as const).map(([view, label]) => (
-              <button
-                key={view}
-                type="button"
-                className={sectionView === view ? 'is-active' : ''}
-                aria-pressed={sectionView === view}
-                onClick={() => setSectionView(view)}
-              >
-                {label}
-              </button>
-            ))}
-            {shownCell !== current && (
-              <button type="button" onClick={() => setViewing(null)}>回到当前格</button>
+            {closeUp ? (
+              <button type="button" className="is-active" onClick={() => setCloseUp(null)}>退后</button>
+            ) : (
+              <>
+                {([
+                  ['room', '近'],
+                  ['block', '邻'],
+                  ['building', '全楼'],
+                ] as const).map(([view, label]) => (
+                  <button
+                    key={view}
+                    type="button"
+                    className={sectionView === view ? 'is-active' : ''}
+                    aria-pressed={sectionView === view}
+                    onClick={() => setSectionView(view)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                {shownCell !== current && (
+                  <button type="button" onClick={() => setViewing(null)}>回到当前格</button>
+                )}
+              </>
             )}
           </div>
           {caption && (
@@ -343,6 +473,22 @@ const WorldScreen: React.FC<WorldScreenProps> = ({
               graph={graph}
               arrivals={arrivals}
               onOpen={onOpenCase}
+              rootRef={notebookRef}
+              onTrayOpen={() => setTrayOpen(true)}
+            />
+            <CardTray
+              open={trayOpen && Boolean(state.case?.notebook)}
+              cards={state.case?.cards ?? []}
+              graph={graph}
+              lines={sheet?.lines ?? []}
+              canDrop={canDropCards}
+              anchorRef={notebookRef}
+              getPartAt={getPartAt}
+              onTarget={onDropTarget}
+              onCombine={onCombineCards}
+              onWobble={onWobblePart}
+              onOpenCase={onOpenCase}
+              onClose={() => setTrayOpen(false)}
             />
           </div>
           <span className="building-legend hidden lg:block">

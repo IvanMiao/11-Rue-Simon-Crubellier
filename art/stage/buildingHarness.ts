@@ -1,18 +1,29 @@
 import { applyCssTokens } from '../cssTokens';
 import { CELLS, CELL_BY_ID } from '../../world/damier';
+import type { LockReason } from '../../engine/types';
 import type { BuildingCallbacks, BuildingHandle, BuildingInput } from './building';
 import type { SectionView } from './sectionLayout';
+import type { StageHotspot } from './types';
+import { MECHANISMS } from './mechanisms';
 
 declare global {
   interface Window {
     __buildingReady?: boolean;
     __buildingStats?: ReturnType<BuildingHandle['stats']>;
     __buildingError?: string;
+    __buildingHandle?: BuildingHandle;
   }
 }
 
 const params = new URLSearchParams(window.location.search);
-const focusParam = params.get('focus') || '3:6';
+const mechParam = params.get('mech');
+const lockParam = params.get('lock');
+const closeUpParam = params.get('closeUp');
+const focusFromMechanism =
+  (mechParam && MECHANISMS[mechParam]?.cellId) ||
+  (lockParam && MECHANISMS[lockParam]?.cellId) ||
+  (closeUpParam && MECHANISMS[closeUpParam]?.cellId);
+const focusParam = params.get('focus') || focusFromMechanism || '3:6';
 const focus = CELL_BY_ID[focusParam] ? focusParam : '3:6';
 const viewParam = params.get('view');
 const view: SectionView = viewParam === 'block' || viewParam === 'building' ? viewParam : 'room';
@@ -26,6 +37,44 @@ const visited =
     : visitedParam === 'none' || !visitedParam
       ? []
       : visitedParam.split(',').filter((cellId) => Boolean(CELL_BY_ID[cellId]));
+const validStatuses = ['open', 'locked', 'done', 'failed'] as const;
+const statusParam = params.get('status');
+const previewStatus = validStatuses.find((status) => status === statusParam) ?? 'open';
+const progressValue = Number(params.get('progress'));
+const previewMechanism =
+  mechParam && MECHANISMS[mechParam]
+    ? {
+        lineId: mechParam,
+        progress: Number.isFinite(progressValue) ? Math.max(0, Math.min(1, progressValue)) : 0,
+      }
+    : undefined;
+const parallaxValue = Number(params.get('parallax'));
+const previewParallax = params.has('parallax') && Number.isFinite(parallaxValue) ? parallaxValue : undefined;
+
+function previewHotspots(): StageHotspot[] {
+  const lineIds = [...new Set([mechParam, lockParam, closeUpParam].filter((id): id is string => Boolean(id)))];
+  return lineIds.flatMap((lineId) => {
+    const spec = MECHANISMS[lineId];
+    if (!spec) return [];
+    const lock: LockReason | undefined =
+      lineId === lockParam || (lineId === mechParam && previewStatus === 'locked')
+        ? { kind: 'notBefore', minute: 120 }
+        : lineId === mechParam && previewStatus === 'failed'
+          ? { kind: 'needsNewCard' }
+          : undefined;
+    return [{
+      lineId,
+      status:
+        lineId === lockParam
+          ? 'locked'
+          : lineId === mechParam
+            ? previewStatus
+            : 'open',
+      kind: lineId.startsWith('it-') ? 'item' : lineId === 'ev-bb-hand' ? 'check' : 'look',
+      lock,
+    }];
+  });
+}
 
 function targetsFor(cellId: string): BuildingInput['targets'] {
   if (params.get('targets') !== '1') return {};
@@ -56,25 +105,52 @@ async function mount() {
     current: focusCell,
     focus: focusCell,
     view: currentView,
+    closeUp: closeUpParam && MECHANISMS[closeUpParam] ? closeUpParam : null,
     hour,
     mode,
     visited,
     lamps: [],
     changed: [],
     targets: targetsFor(focusCell),
-    hotspots: [],
-    highlight: null,
+    hotspots: previewHotspots(),
+    poseHotspots: previewHotspots(),
+    poseHotspotsByCell: { [focusCell]: previewHotspots() },
+    highlight: mechParam || lockParam || closeUpParam || null,
+    armedLineId: null,
+    previewMechanism,
+    previewLockLine: lockParam && MECHANISMS[lockParam] ? lockParam : null,
+    previewParallax,
     lastMove: null,
   };
   const callbacks: BuildingCallbacks = {
     onPickHotspot: () => undefined,
     onPickCell: (cellId) => {
       focusCell = cellId;
-      currentInput = { ...currentInput, focus: focusCell, targets: targetsFor(focusCell) };
+      const hotspots = previewHotspots();
+      currentInput = {
+        ...currentInput,
+        focus: focusCell,
+        targets: targetsFor(focusCell),
+        hotspots,
+        poseHotspots: hotspots,
+        poseHotspotsByCell: { [focusCell]: hotspots },
+      };
       handle?.update(currentInput);
       publishWhenIdle();
     },
     onHoverCell: () => undefined,
+    onHoverLine: () => undefined,
+    onCloseUp: (lineId) => {
+      currentInput = { ...currentInput, closeUp: lineId };
+      handle?.update(currentInput);
+      publishWhenIdle();
+    },
+    onExitCloseUp: () => {
+      currentInput = { ...currentInput, closeUp: null };
+      handle?.update(currentInput);
+      publishWhenIdle();
+    },
+    getNotebookRect: () => null,
     onViewChange: (nextView) => {
       currentView = nextView;
       currentInput = { ...currentInput, view: currentView };
@@ -84,6 +160,7 @@ async function mount() {
   };
   const { mountBuilding } = await import('./building');
   handle = mountBuilding(host, currentInput, callbacks);
+  window.__buildingHandle = handle;
   window.__buildingReady = false;
 
   function publishWhenIdle() {

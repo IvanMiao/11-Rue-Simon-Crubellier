@@ -602,14 +602,14 @@ function arms(m: CastMember): ArmSet {
 }
 
 /** Full-length frozen pose in a FIGURE_W × FIGURE_H canvas, transparent background. Deceased residents come out sepia. */
-export function drawFigure(ctx: Ctx, m: CastMember) {
+export function drawFigure(ctx: Ctx, m: CastMember, options: { hideFrontHand?: boolean } = {}) {
   if (!m.deceased) {
-    drawFigureRaw(ctx, m);
+    drawFigureRaw(ctx, m, options);
     return;
   }
   ctx.drawImage(
     offscreen(FIGURE_W, FIGURE_H, (c) => {
-      drawFigureRaw(c, m);
+      drawFigureRaw(c, m, options);
       sepia(c, FIGURE_W, FIGURE_H);
     }),
     0,
@@ -635,7 +635,7 @@ function keyRing(ctx: Ctx, x: number, y: number) {
   }
 }
 
-function drawFigureRaw(ctx: Ctx, m: CastMember) {
+function drawFigureRaw(ctx: Ctx, m: CastMember, options: { hideFrontHand?: boolean } = {}) {
   ctx.save();
   const k = 0.95 * m.build.height;
   ctx.translate(FIGURE_W / 2 - 50, FIGURE_H - FOOT_PAD);
@@ -677,8 +677,10 @@ function drawFigureRaw(ctx: Ctx, m: CastMember) {
   drawHead(ctx, m);
   ctx.restore();
   limb(ctx, a.front, 42, sleeve);
-  hand(ctx, a.front[a.front.length - 1], m.head.skin);
-  a.inFront?.(ctx);
+  if (!options.hideFrontHand) {
+    hand(ctx, a.front[a.front.length - 1], m.head.skin);
+    a.inFront?.(ctx);
+  }
   ctx.restore();
   ctx.restore();
 }

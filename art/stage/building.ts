@@ -3,12 +3,15 @@ import { InkRenderer, type InkMode } from '../inkPass';
 import { knightPiece } from '../knight';
 import { CHARCOAL, HOUR_LIGHT, LIGHT_2000, PALETTE, TYPE } from '../palette';
 import { toonMaterial } from '../materials';
+import { drawCardArt } from '../draw/cardArt';
 import { CELLS, CELL_BY_ID } from '../../world/damier';
 import { buildCellRoom } from './cellRooms';
 import { buildBuildingSection } from './buildingSection';
 import { CELL_ROOM, PLAYER_SPOT, cellScene, anchorFor } from './cellScenes';
 import { createFlatsAtlas } from './flatsAtlas';
 import { disposeGroup } from './dispose';
+import { mechanismFor, restPose } from './mechanisms';
+import { lockReasonText } from '../../engine/selectors';
 import {
   cellAtPoint,
   cellOrigin3d,
@@ -28,6 +31,7 @@ export interface BuildingInput {
   current: string;
   focus: string;
   view: SectionView;
+  closeUp: string | null;
   hour: 20 | 21 | 22 | 23;
   mode: 'print' | 'blueprint';
   visited: string[];
@@ -35,7 +39,13 @@ export interface BuildingInput {
   changed: string[];
   targets: Record<string, { kind: FlightKind; minutes: number }>;
   hotspots: StageHotspot[];
+  poseHotspots: StageHotspot[];
+  poseHotspotsByCell: Record<string, StageHotspot[]>;
   highlight: string | null;
+  armedLineId: string | null;
+  previewMechanism?: { lineId: string; progress: number };
+  previewLockLine?: string | null;
+  previewParallax?: number;
   lastMove: { from: string; to: string; kind: FlightKind } | null;
 }
 
@@ -43,6 +53,10 @@ export interface BuildingCallbacks {
   onPickHotspot(lineId: string): void;
   onPickCell(cellId: string): void;
   onHoverCell(cellId: string | null): void;
+  onHoverLine(lineId: string | null): void;
+  onCloseUp(lineId: string): void;
+  onExitCloseUp(): void;
+  getNotebookRect(): DOMRect | null;
   onViewChange(view: SectionView): void;
 }
 
@@ -67,6 +81,15 @@ export interface BuildingStats {
 export interface BuildingHandle {
   update(input: BuildingInput): void;
   resize(width: number, height: number): void;
+  partAt(clientX: number, clientY: number): string | null;
+  notebookAnchor(rect: DOMRect): THREE.Vector3;
+  wobblePart(lineId: string): void;
+  animateCards(
+    lineId: string,
+    cardIds: string[],
+    rect: DOMRect,
+    onArrive: (cardId: string, from: { x: number; y: number }) => void
+  ): void;
   dispose(): void;
   stats(): BuildingStats;
 }
@@ -80,6 +103,56 @@ interface CameraPose {
 
 interface RoomEntry {
   group: THREE.Group;
+}
+
+interface RoomInteraction {
+  hotspot: StageHotspot;
+  spec: ReturnType<typeof mechanismFor>;
+  object: THREE.Object3D | null;
+  cellId: string;
+  anchor: THREE.Vector3;
+}
+
+interface MechanismTween {
+  target: RoomInteraction;
+  from: number;
+  to: number;
+  started: number;
+  duration: number;
+  onComplete?: () => void;
+}
+
+interface ActiveDrag {
+  target: RoomInteraction;
+  startX: number;
+  startY: number;
+  base: number;
+  progress: number;
+  moved: boolean;
+}
+
+interface ObjectFlight {
+  target: RoomInteraction;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  startScale: THREE.Vector3;
+  startRotation: THREE.Euler;
+  targetRect: DOMRect;
+  started: number;
+  duration: number;
+  onComplete: () => void;
+}
+
+interface CardFlight {
+  cardId: string;
+  mesh: THREE.Sprite;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  started: number;
+  duration: number;
+  targetRect: DOMRect;
+  arrivalFrom: { x: number; y: number };
+  onArrive: (cardId: string, from: { x: number; y: number }) => void;
 }
 
 interface CameraTween {
@@ -213,6 +286,10 @@ function tagTexture(hotspot: StageHotspot, highlighted: boolean): THREE.CanvasTe
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(statusGlyph[hotspot.status] ?? hotspotGlyph[hotspot.kind], 66, 63);
+  if (highlighted) {
+    ctx.font = `bold 21px ${TYPE.mono}`;
+    ctx.fillText(mechanismFor(hotspot.lineId, '').hint, 66, 105);
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
@@ -249,6 +326,31 @@ function hotspotSprite(hotspot: StageHotspot, index: number, cellId: string, hig
   const [x, y, z] = anchorFor(cellId, hotspot.lineId, index);
   sprite.userData.anchor = new THREE.Vector3(...cellOrigin3d(cellId)).add(new THREE.Vector3(x, y, z));
   return sprite;
+}
+
+function preferredHandLine(hotspots: StageHotspot[], hour: BuildingInput['hour']) {
+  const open = hotspots.find((hotspot) => hotspot.status === 'open');
+  if (open) return open;
+  if (hour >= 22) {
+    const lateLocked = hotspots.find(
+      (hotspot) => hotspot.lineId === 'ev-bb-hand-late' && hotspot.status === 'locked'
+    );
+    if (lateLocked) return lateLocked;
+  }
+  return (
+    hotspots.find((hotspot) => hotspot.status === 'locked') ??
+    hotspots.find((hotspot) => hotspot.status === 'failed') ??
+    hotspots.find((hotspot) => hotspot.status === 'done')
+  );
+}
+
+function handRestLine(hotspots: StageHotspot[], hour: BuildingInput['hour']) {
+  return (
+    hotspots.find((hotspot) => hotspot.status === 'done') ??
+    hotspots.find((hotspot) => hotspot.status === 'failed') ??
+    hotspots.find((hotspot) => hotspot.status === 'open') ??
+    preferredHandLine(hotspots, hour)
+  );
 }
 
 function moveTagTexture(
@@ -399,6 +501,15 @@ export function mountBuilding(
   const hoverGroup = new THREE.Group();
   hoverGroup.name = 'building-hover';
   overlayScene.add(hoverGroup);
+  const partHoverGroup = new THREE.Group();
+  partHoverGroup.name = 'building-part-hover';
+  overlayScene.add(partHoverGroup);
+  const lockTagGroup = new THREE.Group();
+  lockTagGroup.name = 'building-lock-tags';
+  overlayScene.add(lockTagGroup);
+  const cardFlyGroup = new THREE.Group();
+  cardFlyGroup.name = 'building-card-flights';
+  overlayScene.add(cardFlyGroup);
 
   let currentInput: BuildingInput = initial;
   let focusRoomRequired =
@@ -429,6 +540,14 @@ export function mountBuilding(
   }
   let hoverCell: string | null = null;
   let hoveredHotspot: THREE.Sprite | null = null;
+  let hoveredPart: RoomInteraction | null = null;
+  let activeDrag: ActiveDrag | null = null;
+  let parallaxStart: { x: number; y: number; pose: CameraPose } | null = null;
+  const mechanismTweens = new Map<string, MechanismTween>();
+  const objectFlights = new Map<string, ObjectFlight>();
+  const cardFlights = new Set<CardFlight>();
+  let lockTagTimeout: number | null = null;
+  let previewLockTriggered = false;
   const lampLights = new Map<string, THREE.PointLight>();
   let lastMoveObject = initial.lastMove;
   let requestedView = initial.view;
@@ -484,10 +603,464 @@ export function mountBuilding(
     return toPose(frameFor(view, cellId, size.width / Math.max(1, size.height)));
   }
 
+  function frameForInput(input: BuildingInput): CameraPose {
+    const pose = frameForCell(input.view, input.focus);
+    if (input.closeUp && input.view === 'room' && input.focus === input.current) {
+      const target = interactionForLine(input.closeUp);
+      if (target) pose.target.copy(target.anchor);
+      pose.viewHeight = 1.2;
+      pose.pitch += 0.055;
+    }
+    if (input.previewParallax !== undefined && input.view === 'room') {
+      const offset = THREE.MathUtils.clamp(input.previewParallax, -20, 20);
+      pose.yaw += THREE.MathUtils.degToRad(offset);
+      pose.pitch += THREE.MathUtils.degToRad((offset / 20) * 6);
+    }
+    return pose;
+  }
+  cameraTween = {
+    from: clonePose(currentPose),
+    to: frameForInput(initial),
+    started: performance.now(),
+    duration: 600,
+  };
+
   function setKnightCell(cellId: string) {
     const [x, y, z] = cellOrigin3d(cellId);
     const [spotX, spotY, spotZ] = PLAYER_SPOT[cellScene(cellId).kind];
     knight.position.set(x + spotX, y + spotY, z + spotZ);
+  }
+
+  function currentRoomInteractions(): RoomInteraction[] {
+    if (currentInput.view !== 'room' || currentInput.focus !== currentInput.current) return [];
+    const cellId = currentInput.current;
+    const room = rooms.get(cellId);
+    if (!room) return [];
+    const handLines = currentInput.hotspots.filter(
+      (hotspot) => hotspot.lineId === 'ev-bb-hand' || hotspot.lineId === 'ev-bb-hand-late'
+    );
+    const effectiveHand = preferredHandLine(handLines, currentInput.hour);
+    const hotspots = currentInput.hotspots.filter(
+      (hotspot) =>
+        hotspot.lineId !== 'ev-bb-hand' &&
+        hotspot.lineId !== 'ev-bb-hand-late'
+    );
+    if (effectiveHand) hotspots.push(effectiveHand);
+    return hotspots.map((hotspot, index) => {
+      const spec = mechanismFor(hotspot.lineId, cellId);
+      const anchor = new THREE.Vector3(...cellOrigin3d(cellId)).add(
+        new THREE.Vector3(...anchorFor(cellId, hotspot.lineId, index))
+      );
+      let object = spec.part ? room.group.getObjectByName(spec.part) ?? null : null;
+      if (!object && spec.kind === 'generic') {
+        const origin = new THREE.Vector3(...cellOrigin3d(cellId));
+        const localAnchor = new THREE.Vector3(...anchorFor(cellId, hotspot.lineId, index));
+        let nearestDistance = 0.45;
+        room.group.updateMatrixWorld(true);
+        room.group.traverse((candidate) => {
+          const mesh = candidate as THREE.Mesh;
+          if (!mesh.isMesh || !mesh.visible || mesh.userData.noInteract) return;
+          const bounds = new THREE.Box3().setFromObject(mesh);
+          if (bounds.isEmpty()) return;
+          const center = bounds.getCenter(new THREE.Vector3()).sub(origin);
+          const distance = center.distanceTo(localAnchor);
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            object = mesh;
+          }
+        });
+      }
+      return { hotspot, spec, object, cellId, anchor };
+    });
+  }
+
+  function interactionForLine(lineId: string): RoomInteraction | null {
+    const interactions = currentRoomInteractions();
+    const direct = interactions.find((interaction) => interaction.hotspot.lineId === lineId);
+    if (direct) return direct;
+    if (lineId === 'ev-bb-hand' || lineId === 'ev-bb-hand-late') {
+      return interactions.find((interaction) => interaction.spec.part === 'bb-hand') ?? null;
+    }
+    return null;
+  }
+
+  function interactionForObject(object: THREE.Object3D): RoomInteraction | null {
+    const interactions = currentRoomInteractions();
+    for (const interaction of interactions) {
+      if (!interaction.object) continue;
+      if (interaction.object === object || interaction.object.getObjectById(object.id)) return interaction;
+    }
+    return null;
+  }
+
+  function applyInteractionPose(target: RoomInteraction, progress: number) {
+    const object = target.object;
+    if (!object) return;
+    const pose = THREE.MathUtils.clamp(progress, 0, 1);
+    object.userData.mechanismProgress = pose;
+    if (!object.userData.restPosition) object.userData.restPosition = object.position.toArray();
+    if (!object.userData.restRotation) object.userData.restRotation = object.rotation.toArray();
+    if (!object.userData.restScale) object.userData.restScale = object.scale.toArray();
+    const [baseX, baseY, baseZ] = object.userData.restPosition as [number, number, number];
+    const [rotX, rotY, rotZ] = object.userData.restRotation as [number, number, number, string];
+    object.visible =
+      Boolean(object.userData.inFlight) ||
+      !(target.hotspot.status === 'done' && (target.spec.kind === 'lift' || target.spec.kind === 'pickup'));
+    object.position.set(baseX, baseY, baseZ);
+    object.rotation.set(rotX, rotY, rotZ);
+    object.scale.set(...(object.userData.restScale as [number, number, number]));
+    if (target.spec.kind === 'lift') {
+      const leftHinge = object.userData.leftHinge as THREE.Group | undefined;
+      const rightHinge = object.userData.rightHinge as THREE.Group | undefined;
+      object.position.y += pose * 0.5;
+      object.rotation.z += Math.sin(pose * Math.PI) * 0.035;
+      object.scale.multiplyScalar(1 - pose * 0.04);
+      if (leftHinge) leftHinge.rotation.z = -pose * 1.42;
+      if (rightHinge) rightHinge.rotation.z = pose * 1.42;
+    } else if (target.spec.kind === 'flip') {
+      const hinge = object.userData.coverHinge as THREE.Group | undefined;
+      if (hinge) hinge.rotation.z = pose * 1.55 + Math.sin(pose * Math.PI) * 0.035;
+      const page = object.getObjectByName('wk-notes-page-fan') as THREE.Object3D | undefined;
+      if (page) page.rotation.z = pose * 0.18;
+      object.rotation.z += Math.sin(pose * Math.PI) * 0.018;
+    } else if (target.spec.kind === 'pry') {
+      const state = pose < 0.2 ? 'closed' : pose < 0.72 ? 'half' : 'open';
+      for (const child of object.children) {
+        child.visible = child.userData.handPose === state;
+      }
+      object.rotation.z += Math.sin(pose * Math.PI) * 0.045;
+    } else if (target.spec.kind === 'lean') {
+      const trace = object.getObjectByName('bb-puzzle-trace') as THREE.Line | undefined;
+      if (trace) {
+        trace.visible = pose > 0.01;
+        const material = trace.material as THREE.LineBasicMaterial;
+        material.transparent = true;
+        material.opacity = pose;
+      }
+    } else if (target.spec.kind === 'pickup') {
+      object.position.y += pose * 0.3;
+      object.rotation.y += pose * Math.PI * 2;
+    }
+    shadowDirty = true;
+  }
+
+  function applyRestPoses(group: THREE.Group, input: BuildingInput, cellId: string) {
+    const hotspots = input.poseHotspotsByCell[cellId] ?? (cellId === input.focus ? input.poseHotspots : []);
+    const handLines = hotspots.filter(
+      (hotspot) => hotspot.lineId === 'ev-bb-hand' || hotspot.lineId === 'ev-bb-hand-late'
+    );
+    const effectiveHand = handRestLine(handLines, input.hour);
+    for (const [index, hotspot] of hotspots.entries()) {
+      if ((hotspot.lineId === 'ev-bb-hand' || hotspot.lineId === 'ev-bb-hand-late') && hotspot !== effectiveHand) continue;
+      const spec = mechanismFor(hotspot.lineId, cellId);
+      if (spec.kind === 'generic') continue;
+      const object = group.getObjectByName(spec.part);
+      if (!object) continue;
+      const target = {
+        hotspot,
+        spec,
+        object,
+        cellId,
+        anchor: new THREE.Vector3(...cellOrigin3d(cellId)).add(
+          new THREE.Vector3(...anchorFor(cellId, hotspot.lineId, index))
+        ),
+      };
+      const previewProgress =
+        input.previewMechanism?.lineId === hotspot.lineId
+          ? THREE.MathUtils.clamp(input.previewMechanism.progress, 0, 1)
+          : null;
+      applyInteractionPose(
+        target,
+        previewProgress ??
+          (input.armedLineId === hotspot.lineId
+            ? 1
+            : restPose(hotspot.lineId, hotspot.status, input.hour))
+      );
+    }
+  }
+
+  function easeSpring(progress: number) {
+    const t = THREE.MathUtils.clamp(progress, 0, 1);
+    const omega = 7;
+    const end = 1 - (1 + omega) * Math.exp(-omega);
+    return (1 - (1 + omega * t) * Math.exp(-omega * t)) / end;
+  }
+
+  function animateMechanism(
+    target: RoomInteraction,
+    to: number,
+    duration = 340,
+    onComplete?: () => void,
+    fromOverride?: number
+  ) {
+    const key = `${target.cellId}:${target.hotspot.lineId}`;
+    const from =
+      fromOverride ??
+      (typeof target.object?.userData.mechanismProgress === 'number'
+        ? target.object.userData.mechanismProgress
+        : restPose(target.hotspot.lineId, target.hotspot.status, currentInput.hour));
+    mechanismTweens.set(key, { target, from, to, started: performance.now(), duration, onComplete });
+  }
+
+  function notebookAnchor(rect: DOMRect): THREE.Vector3 {
+    const canvasRect = renderer.domElement.getBoundingClientRect();
+    const x =
+      ((rect.left + rect.width / 2 - canvasRect.left) / Math.max(1, canvasRect.width)) * 2 - 1;
+    const y =
+      1 - ((rect.top + rect.height / 2 - canvasRect.top) / Math.max(1, canvasRect.height)) * 2;
+    return new THREE.Vector3(x, y, -0.96).unproject(camera);
+  }
+
+  function animateCards(
+    lineId: string,
+    cardIds: string[],
+    rect: DOMRect,
+    onArrive: (cardId: string, from: { x: number; y: number }) => void
+  ) {
+    const target = interactionForLine(lineId);
+    target?.object?.updateWorldMatrix(true, false);
+    const bounds = target?.object ? new THREE.Box3().setFromObject(target.object) : null;
+    const source =
+      bounds && !bounds.isEmpty()
+        ? bounds.getCenter(new THREE.Vector3())
+        : target?.anchor.clone() ??
+          new THREE.Vector3(...cellOrigin3d(currentInput.current)).add(
+            new THREE.Vector3(...anchorFor(currentInput.current, lineId, 0))
+          );
+    const destination = notebookAnchor(rect);
+    const arrivalFrom = { x: rect.width / 2, y: rect.height / 2 };
+    cardIds.forEach((cardId, index) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 192;
+      canvas.height = 288;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      context.fillStyle = PALETTE.linen;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      drawCardArt(context, cardId, 192);
+      context.strokeStyle = PALETTE.ink;
+      context.lineWidth = 6;
+      context.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const mesh = new THREE.Sprite(material);
+      mesh.scale.set(0.42, 0.63, 1);
+      mesh.renderOrder = 1300;
+      mesh.position.copy(source).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), -0.13);
+      mesh.rotation.z = (index % 2 ? 1 : -1) * 0.08;
+      cardFlyGroup.add(mesh);
+      cardFlights.add({
+        cardId,
+        mesh,
+        from: mesh.position.clone(),
+        to: destination.clone(),
+        started: performance.now() + index * 120,
+        duration: 680,
+        targetRect: rect,
+        arrivalFrom,
+        onArrive,
+      });
+    });
+  }
+
+  function flyObjectToNotebook(target: RoomInteraction, onComplete: () => void) {
+    const object = target.object;
+    const rect = callbacks.getNotebookRect();
+    if (!object || !object.parent || !rect) {
+      onComplete();
+      return;
+    }
+    object.updateWorldMatrix(true, false);
+    const end = notebookAnchor(rect);
+    const endLocal = object.parent.worldToLocal(end);
+    object.userData.inFlight = true;
+    objectFlights.set(`${target.cellId}:${target.hotspot.lineId}`, {
+      target,
+      from: object.position.clone(),
+      to: endLocal,
+      startScale: object.scale.clone(),
+      startRotation: object.rotation.clone(),
+      targetRect: rect,
+      started: performance.now(),
+      duration: 640,
+      onComplete,
+    });
+  }
+
+  function updateMechanisms(now: number) {
+    for (const [key, tween] of mechanismTweens) {
+      const t = Math.min(1, (now - tween.started) / tween.duration);
+      const eased = easeSpring(t);
+      applyInteractionPose(tween.target, tween.from + (tween.to - tween.from) * eased);
+      if (t >= 1) {
+        mechanismTweens.delete(key);
+        tween.onComplete?.();
+      }
+    }
+    for (const [key, flight] of objectFlights) {
+      const object = flight.target.object;
+      if (!object?.parent) {
+        objectFlights.delete(key);
+        flight.onComplete();
+        continue;
+      }
+      const t = Math.min(1, (now - flight.started) / flight.duration);
+      const eased = easeSpring(t);
+      flight.to.copy(object.parent.worldToLocal(notebookAnchor(flight.targetRect)));
+      object.position.lerpVectors(flight.from, flight.to, eased);
+      object.scale.copy(flight.startScale).multiplyScalar(1 - eased * 0.82);
+      object.rotation.copy(flight.startRotation);
+      object.rotation.y += eased * Math.PI * 2;
+      object.position.y += Math.sin(t * Math.PI) * 0.3;
+      shadowDirty = true;
+      if (t >= 1) {
+        objectFlights.delete(key);
+        object.visible = false;
+        object.userData.inFlight = false;
+        flight.onComplete();
+      }
+    }
+    for (const flight of cardFlights) {
+      const t = (now - flight.started) / flight.duration;
+      if (t < 0) {
+        flight.mesh.visible = false;
+        continue;
+      }
+      flight.mesh.visible = true;
+      const progress = Math.min(1, t);
+      const eased = easeSpring(progress);
+      flight.to.copy(notebookAnchor(flight.targetRect));
+      flight.mesh.position.lerpVectors(flight.from, flight.to, eased);
+      flight.mesh.position.addScaledVector(camera.up, Math.sin(progress * Math.PI) * 0.42);
+      const material = flight.mesh.material as THREE.SpriteMaterial;
+      material.rotation = Math.sin(progress * Math.PI) * 0.28;
+      const curl = 0.72 + Math.abs(Math.sin(progress * Math.PI * 2)) * 0.28;
+      flight.mesh.scale.set(0.42 * curl * (1 - eased * 0.45), 0.63 * (1 - eased * 0.45), 1);
+      if (progress >= 1) {
+        cardFlights.delete(flight);
+        cardFlyGroup.remove(flight.mesh);
+        material.map?.dispose();
+        material.dispose();
+        flight.onArrive(flight.cardId, flight.arrivalFrom);
+      }
+    }
+    for (const target of currentRoomInteractions()) {
+      const wobble = target.object?.userData.wobble as
+        | { started: number; duration: number; base: number; amplitude: number }
+        | undefined;
+      if (!target.object || !wobble) continue;
+      const t = (now - wobble.started) / wobble.duration;
+      if (t >= 1) {
+        target.object.rotation.z = wobble.base;
+        delete target.object.userData.wobble;
+      } else {
+        target.object.rotation.z = wobble.base + Math.sin(t * Math.PI * 8) * (1 - t) * wobble.amplitude;
+      }
+    }
+  }
+
+  function wobble(target: RoomInteraction, amplitude: number, duration: number) {
+    if (!target.object) return;
+    target.object.userData.wobble = {
+      started: performance.now(),
+      duration,
+      base: target.object.rotation.z,
+      amplitude,
+    };
+  }
+
+  function showLockTag(target: RoomInteraction, autoHide = true) {
+    if (!target.hotspot.lock) return;
+    if (lockTagTimeout !== null) window.clearTimeout(lockTagTimeout);
+    disposeGroupContents(lockTagGroup);
+    const message = lockReasonText(target.hotspot.lock);
+    const canvas = document.createElement('canvas');
+    canvas.width = 420;
+    canvas.height = 120;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = PALETTE.linen;
+    ctx.strokeStyle = PALETTE.ink;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(12, 10);
+    ctx.lineTo(408, 14);
+    ctx.lineTo(402, 108);
+    ctx.lineTo(9, 104);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = PALETTE.ink;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold 26px ${TYPE.mono}`;
+    ctx.fillText(message, 210, 59, 370);
+    const map = new THREE.CanvasTexture(canvas);
+    map.colorSpace = THREE.SRGBColorSpace;
+    target.object?.updateWorldMatrix(true, false);
+    const bounds = target.object ? new THREE.Box3().setFromObject(target.object) : null;
+    const center = bounds && !bounds.isEmpty() ? bounds.getCenter(new THREE.Vector3()) : target.anchor.clone();
+    const offset = currentInput.closeUp === target.hotspot.lineId
+      ? new THREE.Vector3(0.45, 0.42, 0.3)
+      : new THREE.Vector3(1.1, 0.35, 0.45);
+    const tagPosition = center.clone().add(offset);
+    const thread = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([center, tagPosition]),
+      new THREE.LineBasicMaterial({ color: PALETTE.ink })
+    );
+    thread.renderOrder = 1200;
+    lockTagGroup.add(thread);
+    const tag = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.35, 0.39),
+      new THREE.MeshBasicMaterial({
+        map,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthTest: false,
+        depthWrite: false,
+      })
+    );
+    tag.renderOrder = 1201;
+    tag.position.copy(tagPosition);
+    lockTagGroup.add(tag);
+    wobble(target, 0.11, 360);
+    if (autoHide) {
+      lockTagTimeout = window.setTimeout(() => {
+        disposeGroupContents(lockTagGroup);
+        lockTagTimeout = null;
+      }, 2400);
+    } else {
+      lockTagTimeout = null;
+    }
+  }
+
+  function feedbackFor(target: RoomInteraction) {
+    if (target.hotspot.status === 'done') {
+      wobble(target, 0.035, 190);
+      return;
+    }
+    if (target.hotspot.status === 'locked' || target.hotspot.status === 'failed') {
+      showLockTag(target);
+      if (!target.hotspot.lock) wobble(target, 0.11, 360);
+    }
+  }
+
+  function refreshPartHover() {
+    disposeGroupContents(partHoverGroup);
+    const target = hoveredPart ?? (currentInput.highlight ? interactionForLine(currentInput.highlight) : null);
+    if (!target?.object) return;
+    const bounds = new THREE.Box3().setFromObject(target.object);
+    if (bounds.isEmpty()) return;
+    const outline = new THREE.Box3Helper(bounds.expandByScalar(0.035), PALETTE.brass);
+    outline.renderOrder = 1101;
+    partHoverGroup.add(outline);
   }
 
   function updateLampLights(input: BuildingInput) {
@@ -632,6 +1205,23 @@ export function mountBuilding(
     updateSketchMode(group, cellId !== currentInput.current && !currentInput.visited.includes(cellId));
     roomsRoot.add(group);
     rooms.set(cellId, { group });
+    applyRestPoses(group, currentInput, cellId);
+    const previewLockLine = currentInput.previewLockLine;
+    if (
+      previewLockLine &&
+      mechanismFor(previewLockLine, cellId).cellId === cellId &&
+      !previewLockTriggered
+    ) {
+      const target = interactionForLine(previewLockLine);
+      if (target) {
+        showLockTag(target, false);
+        wobble(target, 0.1, 350);
+        previewLockTriggered = true;
+      }
+    }
+    if (cellId === currentInput.focus && currentInput.closeUp) {
+      addCameraTween(frameForInput(currentInput));
+    }
     lastRoomBuildMs = performance.now() - started;
     roomBuildMs += lastRoomBuildMs;
     roomsBuilt += 1;
@@ -804,12 +1394,24 @@ export function mountBuilding(
 
   function refreshHotspots(input: BuildingInput) {
     clearOverlay(hotspotGroup);
-    input.hotspots.forEach((hotspot, index) => {
+    const handLines = input.hotspots.filter(
+      (hotspot) => hotspot.lineId === 'ev-bb-hand' || hotspot.lineId === 'ev-bb-hand-late'
+    );
+    const effectiveHand = preferredHandLine(handLines, input.hour);
+    const visibleHotspots = input.hotspots.filter(
+      (hotspot) =>
+        hotspot.lineId !== 'ev-bb-hand' &&
+        hotspot.lineId !== 'ev-bb-hand-late'
+    );
+    if (effectiveHand) visibleHotspots.push(effectiveHand);
+    visibleHotspots.forEach((hotspot, index) => {
       const sprite = hotspotSprite(
         hotspot,
         index,
         input.focus,
-        input.highlight === hotspot.lineId
+        input.highlight === hotspot.lineId ||
+          hoveredPart?.hotspot.lineId === hotspot.lineId ||
+          hoveredHotspot?.userData.lineId === hotspot.lineId
       );
       hotspotGroup.add(sprite);
     });
@@ -820,8 +1422,9 @@ export function mountBuilding(
     for (const [cellId, target] of Object.entries(input.targets)) {
       const [x, y] = cellOrigin3d(cellId);
       const sprite = spriteFor(moveTagTexture(target), 1, 1, { cellId, kind: target.kind });
-      sprite.position.set(x, y + CELL_ROOM.H - 0.18, FRONT_Z + 0.12);
+      sprite.position.set(x + CELL_ROOM.W / 2 - 0.6, y + CELL_ROOM.H - 0.2, FRONT_Z + 0.12);
       sprite.userData.desiredPixels = { width: 72, height: 25 };
+      sprite.userData.tagCorner = 'top-right';
       moveGroup.add(sprite);
     }
   }
@@ -851,6 +1454,14 @@ export function mountBuilding(
       const width = desired?.width ?? pixels.width;
       const height = desired?.height ?? pixels.height;
       sprite.scale.set(width * worldPerPixel, height * worldPerPixel, 1);
+      if (sprite.userData.tagCorner === 'top-right' && cellId) {
+        const [x, y] = cellOrigin3d(cellId);
+        sprite.position.set(
+          x + CELL_ROOM.W / 2 - (width * worldPerPixel) / 2 - 0.05,
+          y + CELL_ROOM.H - (height * worldPerPixel) / 2 - 0.05,
+          FRONT_Z + 0.12
+        );
+      }
     }
   }
 
@@ -864,27 +1475,77 @@ export function mountBuilding(
     refreshMoveTags(input);
     refreshChangedTags(input);
     refreshHover();
+    refreshPartHover();
   }
 
-  function pickedHotspot(event: PointerEvent): THREE.Sprite | undefined {
+  function setPointerFromClient(clientX: number, clientY: number) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
+      ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1,
+      -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1
     );
     raycaster.setFromCamera(pointer, camera);
+  }
+
+  function pickedHotspot(clientX: number, clientY: number): THREE.Sprite | undefined {
+    setPointerFromClient(clientX, clientY);
     return raycaster.intersectObjects(hotspotGroup.children, false)[0]?.object as THREE.Sprite | undefined;
   }
 
-  function pickedCell(event: PointerEvent): string | null {
-    const rect = renderer.domElement.getBoundingClientRect();
-    pointer.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    );
-    raycaster.setFromCamera(pointer, camera);
+  function pickedCell(clientX: number, clientY: number): string | null {
+    setPointerFromClient(clientX, clientY);
     if (!raycaster.ray.intersectPlane(pickPlane, pickPoint)) return null;
     return cellAtPoint(pickPoint.x, pickPoint.y);
+  }
+
+  function pickedInteraction(clientX: number, clientY: number): RoomInteraction | null {
+    if (currentInput.view !== 'room' || currentInput.current !== currentInput.focus) return null;
+    const canvasRect = renderer.domElement.getBoundingClientRect();
+    if (
+      clientX < canvasRect.left ||
+      clientX > canvasRect.right ||
+      clientY < canvasRect.top ||
+      clientY > canvasRect.bottom
+    ) {
+      return null;
+    }
+    const room = rooms.get(currentInput.current);
+    if (!room?.group.visible) return null;
+    setPointerFromClient(clientX, clientY);
+    for (const hit of raycaster.intersectObjects(room.group.children, true)) {
+      const interaction = interactionForObject(hit.object);
+      if (interaction) return interaction;
+    }
+    return null;
+  }
+
+  function activateInteraction(target: RoomInteraction, fromProgress?: number) {
+    if (target.hotspot.status !== 'open') {
+      feedbackFor(target);
+      return;
+    }
+    if (target.spec.kind === 'lean') callbacks.onCloseUp(target.hotspot.lineId);
+    const duration = target.spec.kind === 'lift' || target.spec.kind === 'flip' ? 410 : 330;
+    animateMechanism(target, 1, duration, () => finishInteraction(target), fromProgress);
+  }
+
+  function finishInteraction(target: RoomInteraction) {
+    if (target.spec.kind === 'lift' || target.spec.kind === 'pickup') {
+      flyObjectToNotebook(target, () => callbacks.onPickHotspot(target.hotspot.lineId));
+    } else {
+      callbacks.onPickHotspot(target.hotspot.lineId);
+    }
+  }
+
+  function finishParallax() {
+    if (!parallaxStart) return;
+    cameraTween = {
+      from: currentPose,
+      to: parallaxStart.pose,
+      started: performance.now(),
+      duration: 450,
+    };
+    parallaxStart = null;
   }
 
   function onPointerMove(event: PointerEvent) {
@@ -902,32 +1563,125 @@ export function mountBuilding(
       }
       return;
     }
-    const hotspot = pickedHotspot(event);
+    if (activeDrag) {
+      const dx = event.clientX - activeDrag.startX;
+      const dy = event.clientY - activeDrag.startY;
+      const distance =
+        activeDrag.target.spec.dragAxis === 'right'
+          ? dx
+          : activeDrag.target.spec.dragAxis === 'left'
+            ? -dx
+            : -dy;
+      activeDrag.progress = THREE.MathUtils.clamp(activeDrag.base + distance / 120, 0, 1);
+      activeDrag.moved ||= Math.abs(dx) + Math.abs(dy) > 4;
+      applyInteractionPose(activeDrag.target, activeDrag.progress);
+      renderer.domElement.style.cursor = 'grabbing';
+      return;
+    }
+    if (parallaxStart) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const dx = (event.clientX - parallaxStart.x) / Math.max(1, rect.width);
+      const dy = (event.clientY - parallaxStart.y) / Math.max(1, rect.height);
+      const pose: CameraPose = {
+        ...parallaxStart.pose,
+        target: parallaxStart.pose.target.clone(),
+        yaw: parallaxStart.pose.yaw + THREE.MathUtils.clamp(dx * 0.7, -THREE.MathUtils.degToRad(20), THREE.MathUtils.degToRad(20)),
+        pitch:
+          parallaxStart.pose.pitch +
+          THREE.MathUtils.clamp(-dy * 0.22, -THREE.MathUtils.degToRad(6), THREE.MathUtils.degToRad(6)),
+      };
+      cameraTween = null;
+      cameraFlight = null;
+      currentPose = pose;
+      applyCameraPose(pose);
+      return;
+    }
+    const interaction = pickedInteraction(event.clientX, event.clientY);
+    const hotspot = interaction ? undefined : pickedHotspot(event.clientX, event.clientY);
+    const previousLine = hoveredPart?.hotspot.lineId ?? hoveredHotspot?.userData.lineId ?? null;
+    hoveredPart = interaction;
     hoveredHotspot = hotspot ?? null;
-    const nextCell = hotspot ? null : pickedCell(event);
+    const nextLine = interaction?.hotspot.lineId ?? hotspot?.userData.lineId ?? null;
+    if (previousLine !== nextLine) {
+      callbacks.onHoverLine(typeof nextLine === 'string' ? nextLine : null);
+      refreshPartHover();
+      refreshHotspots(currentInput);
+    }
+    const nextCell = interaction || hotspot ? null : pickedCell(event.clientX, event.clientY);
     if (nextCell !== hoverCell) {
       hoverCell = nextCell;
       callbacks.onHoverCell(nextCell);
       refreshHover();
     }
-    renderer.domElement.style.cursor = hotspot || nextCell ? 'pointer' : 'default';
+    const hoveredHotspotData = hoveredHotspot?.userData.hotspot as StageHotspot | undefined;
+    const hoveredStatus = interaction?.hotspot.status ?? hoveredHotspotData?.status;
+    const blocked = hoveredStatus === 'locked' || hoveredStatus === 'failed';
+    renderer.domElement.style.cursor = interaction
+      ? blocked
+        ? 'not-allowed'
+        : interaction.spec.gesture === 'drag'
+          ? 'grab'
+          : 'pointer'
+      : hotspot
+        ? blocked
+          ? 'not-allowed'
+          : mechanismFor(
+              String(hotspot.userData.lineId ?? ''),
+              currentInput.focus
+            ).gesture === 'drag'
+            ? 'grab'
+            : 'pointer'
+        : nextCell
+          ? 'pointer'
+        : currentInput.closeUp
+          ? 'zoom-out'
+          : 'default';
   }
 
   function onPointerLeave() {
+    if (activeDrag) return;
+    if (parallaxStart) finishParallax();
     hoveredHotspot = null;
+    hoveredPart = null;
     hoverCell = null;
     callbacks.onHoverCell(null);
+    callbacks.onHoverLine(null);
     refreshHover();
+    refreshPartHover();
     renderer.domElement.style.cursor = 'default';
   }
 
   function onPointerDown(event: PointerEvent) {
-    if (event.pointerType !== 'touch') return;
-    pointerPositions.set(event.pointerId, new THREE.Vector2(event.clientX, event.clientY));
-    if (pointerPositions.size >= 2) {
-      const [first, second] = [...pointerPositions.values()];
-      pinchStartDistance = first.distanceTo(second);
-      pinchStartChanged = false;
+    if (event.pointerType === 'touch') {
+      pointerPositions.set(event.pointerId, new THREE.Vector2(event.clientX, event.clientY));
+      if (pointerPositions.size >= 2) {
+        const [first, second] = [...pointerPositions.values()];
+        pinchStartDistance = first.distanceTo(second);
+        pinchStartChanged = false;
+      }
+      return;
+    }
+    const interaction = pickedInteraction(event.clientX, event.clientY);
+    const hotspot = interaction ? undefined : pickedHotspot(event.clientX, event.clientY);
+    if (interaction?.spec.gesture === 'drag' && interaction.hotspot.status === 'open') {
+      activeDrag = {
+        target: interaction,
+        startX: event.clientX,
+        startY: event.clientY,
+        base: restPose(interaction.hotspot.lineId, interaction.hotspot.status, currentInput.hour),
+        progress: restPose(interaction.hotspot.lineId, interaction.hotspot.status, currentInput.hour),
+        moved: false,
+      };
+      renderer.domElement.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+    if (!interaction && !hotspot && currentInput.view === 'room') {
+      parallaxStart = {
+        x: event.clientX,
+        y: event.clientY,
+        pose: { ...currentPose, target: currentPose.target.clone() },
+      };
     }
   }
 
@@ -937,19 +1691,68 @@ export function mountBuilding(
       pinchStartDistance = null;
       pinchStartChanged = false;
     }
+    if (activeDrag) {
+      const drag = activeDrag;
+      activeDrag = null;
+      if (drag.moved) {
+        suppressClickUntil = performance.now() + 450;
+        if (drag.progress >= 0.8) {
+          animateMechanism(
+            drag.target,
+            1,
+            260,
+            () => finishInteraction(drag.target),
+            drag.progress
+          );
+        } else {
+          animateMechanism(drag.target, drag.base, 320, undefined, drag.progress);
+        }
+      }
+    }
+    if (parallaxStart) {
+      const moved = Math.hypot(event.clientX - parallaxStart.x, event.clientY - parallaxStart.y) > 4;
+      if (moved) suppressClickUntil = performance.now() + 350;
+      finishParallax();
+    }
   }
 
   function onClick(event: MouseEvent) {
     if (performance.now() < suppressClickUntil) return;
-    const pointerEvent = event as PointerEvent;
-    const hotspot = pickedHotspot(pointerEvent);
-    const lineId = hotspot?.userData.lineId;
-    if (typeof lineId === 'string') {
-      callbacks.onPickHotspot(lineId);
+    if (event.detail > 1) {
+      suppressClickUntil = performance.now() + 420;
       return;
     }
-    const cellId = pickedCell(pointerEvent);
+    const interaction = pickedInteraction(event.clientX, event.clientY);
+    if (interaction) {
+      activateInteraction(interaction);
+      return;
+    }
+    if (currentInput.closeUp) {
+      callbacks.onExitCloseUp();
+      return;
+    }
+    const hotspot = pickedHotspot(event.clientX, event.clientY);
+    const lineId = hotspot?.userData.lineId;
+    if (typeof lineId === 'string') {
+      const target = interactionForLine(lineId);
+      if (target) activateInteraction(target);
+      else callbacks.onPickHotspot(lineId);
+      return;
+    }
+    const cellId = pickedCell(event.clientX, event.clientY);
     if (cellId) callbacks.onPickCell(cellId);
+  }
+
+  function onDoubleClick(event: MouseEvent) {
+    const target =
+      pickedInteraction(event.clientX, event.clientY) ??
+      (() => {
+        const lineId = pickedHotspot(event.clientX, event.clientY)?.userData.lineId;
+        return typeof lineId === 'string' ? interactionForLine(lineId) : null;
+      })();
+    if (!target) return;
+    suppressClickUntil = performance.now() + 400;
+    callbacks.onCloseUp(target.hotspot.lineId);
   }
 
   function stepView(direction: number) {
@@ -972,11 +1775,13 @@ export function mountBuilding(
   renderer.domElement.addEventListener('pointerup', onPointerUp);
   renderer.domElement.addEventListener('pointercancel', onPointerUp);
   renderer.domElement.addEventListener('click', onClick);
+  renderer.domElement.addEventListener('dblclick', onDoubleClick);
   renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
 
   function applyInput(input: BuildingInput, animate: boolean, deferAtlas = false) {
     const previous = currentInput;
     currentInput = input;
+    if (previous.previewLockLine !== input.previewLockLine) previewLockTriggered = false;
     focusRoomRequired =
       detailTier(input.focus, input.focus, new Set(input.visited), input.view) === 'room';
     requestedView = input.view;
@@ -995,6 +1800,7 @@ export function mountBuilding(
       atlasRefreshPending = true;
     }
     if (demandChanged) updateRoomDemand(input);
+    for (const [cellId, entry] of rooms) applyRestPoses(entry.group, input, cellId);
     if (demandChanged || lampsChanged || previous.hour !== input.hour) {
       if (!deferAtlas) refreshAtlas();
     }
@@ -1005,7 +1811,7 @@ export function mountBuilding(
       );
     }
     if (previous.current !== input.current && input.lastMove === null) setKnightCell(input.current);
-    if (animate) addCameraTween(frameForCell(input.view, input.focus));
+    if (animate) addCameraTween(frameForInput(input));
   }
 
   refreshHotspots(initial);
@@ -1027,13 +1833,13 @@ export function mountBuilding(
     const now = performance.now();
     if (roomQueue.length > 0) buildOneRoom();
     const movementFrame = cameraFlight !== null || cameraTween !== null;
+    updateMechanisms(now);
     updateCamera(now);
     if (!cameraFlight && !cameraTween && flightRenderMode) setFlightRenderMode(false);
     camera.updateMatrixWorld();
     layoutHotspots();
     layoutCellSprites(moveGroup, { width: 72, height: 25 });
     layoutCellSprites(changedGroup, { width: 25, height: 25 });
-    if (hoveredHotspot) renderer.domElement.style.cursor = 'pointer';
 
     renderer.info.reset();
     const focusRoomReady = !focusRoomRequired || rooms.has(currentInput.focus);
@@ -1116,7 +1922,8 @@ export function mountBuilding(
     update(input) {
       const old = currentInput;
       const movementStarted = input.lastMove !== null && input.lastMove !== lastMoveObject;
-      const changedFocus = input.focus !== old.focus || input.view !== old.view;
+      const changedFocus =
+        input.focus !== old.focus || input.view !== old.view || input.closeUp !== old.closeUp;
       const hotspotChanged =
         JSON.stringify(input.hotspots) !== JSON.stringify(old.hotspots) ||
         input.focus !== old.focus ||
@@ -1131,7 +1938,7 @@ export function mountBuilding(
         startFlight(input);
       } else {
         applyInput(input, false);
-        if (changedFocus) addCameraTween(frameForCell(input.view, input.focus));
+        if (changedFocus) addCameraTween(frameForInput(input));
       }
       if (hotspotChanged || tagsChanged) updateOverlays(input);
     },
@@ -1143,21 +1950,46 @@ export function mountBuilding(
       ink.setSize(width, height);
       setFrustum(currentPose.viewHeight);
       camera.updateMatrixWorld();
-      const framePose = frameForCell(currentInput.view, currentInput.focus);
+      const framePose = frameForInput(currentInput);
       if (!cameraFlight) addCameraTween(framePose, 600);
     },
+    partAt(clientX, clientY) {
+      const target = pickedInteraction(clientX, clientY);
+      suppressClickUntil = performance.now() + 420;
+      const previousLine = hoveredPart?.hotspot.lineId ?? null;
+      hoveredPart = target;
+      const lineId = target?.hotspot.lineId ?? null;
+      if (previousLine !== lineId) {
+        callbacks.onHoverLine(lineId);
+        refreshPartHover();
+        refreshHotspots(currentInput);
+      }
+      return lineId;
+    },
+    notebookAnchor,
+    wobblePart(lineId) {
+      const target = interactionForLine(lineId);
+      if (target) wobble(target, 0.1, 350);
+    },
+    animateCards,
     dispose() {
       if (disposed) return;
       disposed = true;
       cancelAnimationFrame(frame);
       if (flightTimer !== null) window.clearTimeout(flightTimer);
       resizeObserver.disconnect();
+      if (lockTagTimeout !== null) window.clearTimeout(lockTagTimeout);
+      lockTagTimeout = null;
+      mechanismTweens.clear();
+      objectFlights.clear();
+      cardFlights.clear();
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('pointercancel', onPointerUp);
       renderer.domElement.removeEventListener('click', onClick);
+      renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('wheel', onWheel);
       clearOverlay(hotspotGroup);
       clearOverlay(moveGroup);

@@ -47,7 +47,7 @@ export const ANCHORS: Record<string, [number, number, number]> = {
   'ev-ch-coal': [0.62, 0.3, 0.44],
   'ev-an-receipt': [-0.32, 0.98, -0.56],
   'ev-ci-dict': [1.05, 1.44, -0.99],
-  'it-keyring': [0.86, 1.78, -1.35],
+  'it-keyring': [-0.1, 1.04, 0.4],
   'it-loupe': [0.68, 0.84, -0.16],
   '100-1-finale': [0, 0.82, 0.25],
 };

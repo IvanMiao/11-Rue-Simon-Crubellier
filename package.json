@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "npx --yes tsx utils/gameLogic.test.ts && npx --yes tsx engine/engine.test.ts && npx --yes tsx art/cast.test.ts && npx --yes tsx world/damier.test.ts && npx --yes tsx art/stage/cellScenes.test.ts && npx --yes tsx art/stage/sectionLayout.test.ts",
+    "test": "npx --yes tsx utils/gameLogic.test.ts && npx --yes tsx engine/engine.test.ts && npx --yes tsx art/cast.test.ts && npx --yes tsx world/damier.test.ts && npx --yes tsx art/stage/cellScenes.test.ts && npx --yes tsx art/stage/sectionLayout.test.ts && npx --yes tsx art/stage/mechanisms.test.ts",
     "sim": "npx --yes tsx scripts/sim.ts",
     "typecheck": "tsc --noEmit",
     "check:bundle": "node scripts/check-bundle.mjs"
