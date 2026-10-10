@@ -17,6 +17,7 @@ export const PALETTE = {
   sky: '#8ec1e3',
   skyWarm: '#f6c88a',
   roof: '#5d6f86',
+  washNavy: '#7893b5',
   sea: '#2e6fa3',
   accent: '#c8372d',
   linen: '#f7f1e3',
@@ -122,7 +123,7 @@ export const CHARCOAL = {
 
 /** Watercolour wash used when a cell has been entered, keyed by apartment id. */
 export const WASH: Record<string, string> = {
-  '3-1': TONES.navy,
+  '3-1': PALETTE.washNavy,
   '6-3': TONES.ochre,
   '8-6': TONES.steel,
   '0-4': TONES.cobalt,

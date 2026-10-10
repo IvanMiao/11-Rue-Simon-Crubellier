@@ -41,6 +41,22 @@ Run it: `npm run dev`, then open `/style-lab.html` (press `1` room view, `2` sec
 - The light shaft fades to zero at its side edges, so no rectangle shows over figures.
 - `/cells.html` is a contact sheet of every case room (`?hour=23`, `?mode=blueprint`) for visual regression.
 
+## Whole-building stage and S1 interactions
+
+- The playable building is a cut-away paper theatre (`art/stage/`): authored case rooms, painted/sketch flats, chapter-cell movement, and an orthographic camera with edge-clamped framing.
+- Bartlebooth's hand is a skin-matched cut-out that continues the navy sleeve, with separated fingers, knuckle creases, and closed, half-open, and palm-up poses. The puzzle's compact charcoal X outline draws on over 500 ms in close-up.
+- Freshly visited cells fade from a charcoal room sketch into their painted state; the atlas flat and room detail share the stage's injectable animation clock.
+- Notebook, puzzle, hand, Winckler's notes, keyring and loupe are scene mechanisms. Gestures dispatch through the existing WorldScreen actions; the room sheet remains the text and accessibility entry.
+- Hover and drop targets use a brass silhouette rim and warm material tint rather than a debug bounds box. The player marker is hidden while a close-up is active; cell `8:7` has a separate landing spot away from the loupe.
+- Specialized mechanisms are authored for `3:6`, `3:1` and `6:8`. Generic cells still use the tag plus nearest-mesh behavior; this is the main remaining interaction-art limitation.
+
+## Resolved in S3 audio
+
+- Selected sounds are CC0, mono 44.1 kHz Ogg assets under `public/audio/`; source identity, aliases, direct URLs, license evidence, and processing are recorded in `docs/audio-provenance.md`.
+- `audio/` is a presentation-only Web Audio controller: cue variants are stable by cue/key, settings persist under `s3:audio-settings:v1`, and clock, boiler, and rain beds follow the authored cell/hour plan.
+- Fresh game events and typed building interactions drive paper, mechanism, movement, check, hour, and ending cues. Audio does not infer one-shots from loaded state.
+- The sound toggle and labelled master, ambience, and music controls sit beside the motion control. Audio remains intentionally sparse and mono; generic-cell hotspots still use the nearest-mesh interaction model rather than individually authored contact sounds.
+
 ## Known shortcomings (to address later)
 
 ### Residents (cut-out figures)
@@ -58,11 +74,11 @@ Run it: `npm run dev`, then open `/style-lab.html` (press `1` room view, `2` sec
 
 ### Lighting and rendering
 - Dust motes are fixed screen-size points (scaled by zoom); they look busy in the section view.
-- Hour light is global per hour; lamps are not yet tied to individual residents or room signals.
+- Hour light is global per hour; lamps stagger deterministically rather than responding to individual residents.
 - Ink lines come only from depth/normal breaks, so coplanar details (rug border, plank seams) rely on texture lines.
 - Screenshots were produced with software WebGL; real-GPU performance has not been profiled.
 
 ### Scene and UI
 - Room labels on slab fronts are small in the section view.
-- Hotspot tags for nearby anchors are offset vertically, so some sit above their object rather than on it (e.g. Bartlebooth’s hand).
-- The in-game plate is one cell; there is no camera flight through the full building section yet.
+- Generic-cell hotspots can still sit above the nearest mesh rather than forming an authored physical mechanism.
+- The room sheet remains necessary for line labels, status, lock reasons and accessibility.

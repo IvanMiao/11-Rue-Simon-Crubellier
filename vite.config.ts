@@ -17,6 +17,9 @@ export default defineConfig(({ command, mode }) => {
       ...(fs.existsSync(path.resolve(__dirname, 'cells.html'))
         ? { cells: path.resolve(__dirname, 'cells.html') }
         : {}),
+      ...(fs.existsSync(path.resolve(__dirname, 'building.html'))
+        ? { building: path.resolve(__dirname, 'building.html') }
+        : {}),
     };
     return {
       server: {

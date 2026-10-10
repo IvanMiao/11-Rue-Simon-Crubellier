@@ -9,8 +9,11 @@ import { withPaperBorder } from './draw/paperBorder';
 /** World height of the whole figure canvas: a build.height = 1 resident stands 1.72 m. */
 export const FIGURE_WORLD_H = 2.06;
 
-export function figureCanvas(m: CastMember): HTMLCanvasElement {
-  const raw = canvas(FIGURE_W, FIGURE_H, (ctx) => drawFigure(ctx, m));
+export function figureCanvas(
+  m: CastMember,
+  options: { hideFrontHand?: boolean } = {}
+): HTMLCanvasElement {
+  const raw = canvas(FIGURE_W, FIGURE_H, (ctx) => drawFigure(ctx, m, options));
   return withPaperBorder(raw, LINE.cutoutBorderPx * 1.6);
 }
 
@@ -23,7 +26,7 @@ export function paperCutout(src: HTMLCanvasElement, worldHeight: number, opts: {
   const w = (worldHeight * src.width) / src.height;
   const geo = new THREE.PlaneGeometry(w, worldHeight);
   geo.translate(0, worldHeight / 2, 0);
-  const mat = toonMaterial('#ffffff', { map, alphaTest: 0.5, side: THREE.DoubleSide });
+  const mat = toonMaterial(PALETTE.paper, { map, alphaTest: 0.5, side: THREE.DoubleSide });
   const card = new THREE.Mesh(geo, mat);
   card.castShadow = true;
   card.receiveShadow = true;

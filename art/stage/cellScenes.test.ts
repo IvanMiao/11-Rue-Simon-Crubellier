@@ -4,7 +4,13 @@ import { CASE_ITEMS } from '../../case/caseData';
 import { FINALE_INTERACTION } from '../../utils/fallbackContent';
 import { CELLS, CLINAMEN_CELL } from '../../world/damier';
 import { PALETTE } from '../palette';
-import { ANCHORS, CELL_ROOM, cellScene } from './cellScenes';
+import {
+  ANCHORS,
+  CELL_ROOM,
+  PLAYER_SPOT,
+  cellScene,
+  playerSpot,
+} from './cellScenes';
 
 const sceneCells = [...CASE_ROOM_IDS, CLINAMEN_CELL];
 for (const cellId of sceneCells) {
@@ -41,5 +47,38 @@ for (const cellId of ['3:6', '0:6']) {
 const emptyCell = CELLS.find((cell) => cellScene(cell.id).kind === 'empty')!;
 assert.equal(cellScene(emptyCell.id).wall, PALETTE.plaster, `${emptyCell.id} needs a light base wall`);
 assert.equal(cellScene(emptyCell.id).floor, PALETTE.paperDeep, `${emptyCell.id} needs a light base floor`);
+
+const kinds = new Set(CELLS.map((cell) => cellScene(cell.id).kind));
+kinds.add('clinamen');
+for (const kind of kinds) {
+  const [x, y, z] = PLAYER_SPOT[kind];
+  assert.ok(x >= -CELL_ROOM.W / 2 && x <= CELL_ROOM.W / 2, `${kind} player x is outside the room`);
+  assert.ok(y >= 0 && y <= CELL_ROOM.H, `${kind} player y is outside the room`);
+  assert.ok(z >= -CELL_ROOM.D / 2 && z <= CELL_ROOM.D / 2, `${kind} player z is outside the room`);
+  for (const [anchorId, anchor] of Object.entries(ANCHORS)) {
+    const distance = Math.hypot(x - anchor[0], y - anchor[1], z - anchor[2]);
+    assert.ok(distance >= 0.45, `${kind} player spot overlaps ${anchorId} at ${distance}`);
+  }
+}
+
+const seededGraph = buildCase(1);
+for (const cellId of CASE_ROOM_IDS) {
+  const [x, y, z] = playerSpot(cellId);
+  const lines = seededGraph.evidence.filter((line) => line.roomId === cellId);
+  for (const line of lines) {
+    const anchor = ANCHORS[line.id];
+    if (!anchor) continue;
+    const distance = Math.hypot(x - anchor[0], y - anchor[1], z - anchor[2]);
+    assert.ok(distance >= 0.45, `${cellId} player spot overlaps ${line.id} at ${distance}`);
+  }
+  const item = CASE_ITEMS.find((candidate) => candidate.roomId === cellId);
+  if (item) {
+    const anchor = ANCHORS[item.id];
+    if (anchor) {
+      const distance = Math.hypot(x - anchor[0], y - anchor[1], z - anchor[2]);
+      assert.ok(distance >= 0.45, `${cellId} player spot overlaps ${item.id} at ${distance}`);
+    }
+  }
+}
 
 console.log('cell scene checks passed');

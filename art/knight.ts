@@ -5,7 +5,7 @@ import { toonMaterial } from './materials';
 /** The player: a lacquered Staunton knight, the only thing in the building allowed to move. */
 export function knightPiece(height = 0.62): THREE.Group {
   const g = new THREE.Group();
-  const lacquer = toonMaterial('#2c2926');
+  const lacquer = toonMaterial(PALETTE.ink);
   const base = new THREE.LatheGeometry(
     [
       [0, 0], [0.3, 0], [0.31, 0.03], [0.3, 0.07], [0.25, 0.1], [0.23, 0.15], [0.27, 0.18], [0.26, 0.21], [0.19, 0.23], [0, 0.23],

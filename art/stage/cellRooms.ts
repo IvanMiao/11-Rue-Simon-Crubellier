@@ -4,12 +4,13 @@ import { PALETTE, TONES } from '../palette';
 import { armchair, bentwoodChair, boiler, coalPile, dustSheet, shopCounter, stackedFrames, turnedTable, wardrobe } from '../props';
 import { figureCanvas, paperCutout } from '../figures';
 import { drawDamier } from '../draw/damier';
+import { drawBartleboothHand } from '../draw/mechanisms';
 import { drawBust } from '../draw/people';
-import { CELL_ROOM, type CellScene } from './cellScenes';
+import { CELL_ROOM, cellScene, type CellScene } from './cellScenes';
 import { canvas, harbourTexture, texture } from '../textures';
 import { knightPiece } from '../knight';
 import { toonMaterial, sectionBox } from '../materials';
-import { CELLS, CLINAMEN_CELL } from '../../world/damier';
+import { CELL_BY_ID, CELLS, CLINAMEN_CELL } from '../../world/damier';
 
 function box(
   parent: THREE.Object3D,
@@ -90,6 +91,48 @@ function windowMaterial() {
   return new THREE.MeshBasicMaterial({ color: PALETTE.skyWarm });
 }
 
+function ambientCurtains(g: THREE.Group, x0: number, x1: number, y0: number, y1: number, z: number) {
+  const curtains = new THREE.Group();
+  curtains.name = 'ambient-curtains';
+  curtains.userData.ambientCurtains = true;
+  const panelWidth = 0.22;
+  for (const side of [-1, 1]) {
+    const panel = new THREE.Group();
+    panel.name = 'ambient-curtain-panel';
+    panel.position.set(side < 0 ? x0 : x1, y1, z);
+    const fabric = box(
+      panel,
+      panelWidth,
+      y1 - y0,
+      0.035,
+      PALETTE.linen,
+      side * panelWidth * 0.48,
+      -(y1 - y0) / 2,
+      0
+    );
+    fabric.userData.noInk = false;
+    curtains.add(panel);
+  }
+  const sheer = new THREE.Group();
+  sheer.name = 'ambient-window-sheer';
+  sheer.position.set((x0 + x1) / 2, y1, z + 0.012);
+  const veil = new THREE.Mesh(
+    new THREE.PlaneGeometry(x1 - x0, y1 - y0),
+    new THREE.MeshBasicMaterial({
+      color: PALETTE.paper,
+      transparent: true,
+      opacity: 0.12,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  veil.position.y = -(y1 - y0) / 2;
+  veil.userData.noInk = true;
+  sheer.add(veil);
+  curtains.add(sheer);
+  g.add(curtains);
+}
+
 function wallPanel(g: THREE.Group, scene: CellScene, wall: THREE.Texture) {
   const { W, H, D } = CELL_ROOM;
   const wallZ = -D / 2;
@@ -104,6 +147,7 @@ function wallPanel(g: THREE.Group, scene: CellScene, wall: THREE.Texture) {
   const pane = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0 - 0.06, y1 - y0 - 0.06), sky);
   pane.position.set((x0 + x1) / 2, (y0 + y1) / 2, wallZ + 0.04);
   pane.userData.noInk = true;
+  pane.userData.sketchWindow = true;
   g.add(pane);
 
   const frame = PALETTE.linen;
@@ -115,19 +159,76 @@ function wallPanel(g: THREE.Group, scene: CellScene, wall: THREE.Texture) {
   box(g, 0.05, y1 - y0, 0.1, frame, (x0 + x1) / 2, (y0 + y1) / 2, frameZ);
   box(g, x1 - x0, 0.05, 0.1, frame, (x0 + x1) / 2, y0 + (y1 - y0) * 0.64, frameZ);
   box(g, x1 - x0 + 0.24, 0.06, 0.2, PALETTE.wood, (x0 + x1) / 2, y0 - 0.05, wallZ + 0.14);
+  ambientCurtains(g, x0, x1, y0, y1, wallZ + 0.11);
   return sky;
 }
 
 function pendant(g: THREE.Group) {
-  cylinder(g, 0.018, 0.018, 0.42, PALETTE.ink, 0, 2.78, 0);
+  const assembly = new THREE.Group();
+  assembly.name = 'ambient-pendant';
+  assembly.position.y = 2.84;
+  cylinder(assembly, 0.018, 0.018, 0.42, PALETTE.ink, 0, -0.21, 0);
   const shade = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.22, 12, 1, true), toonMaterial(PALETTE.brass));
-  shade.position.set(0, 2.56, 0);
+  shade.position.set(0, -0.28, 0);
   shade.castShadow = true;
-  g.add(shade);
+  assembly.add(shade);
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshBasicMaterial({ color: PALETTE.light }));
-  bulb.position.set(0, 2.48, 0);
+  bulb.name = 'pendant-bulb';
+  bulb.position.set(0, -0.36, 0);
   bulb.userData.noInk = true;
-  g.add(bulb);
+  bulb.userData.sketchLamp = true;
+  assembly.add(bulb);
+  g.add(assembly);
+}
+
+function wallClock(g: THREE.Group, x: number, y: number, z: number) {
+  const clock = new THREE.Group();
+  clock.name = 'ambient-wall-clock';
+  const rim = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.22, 0.055, 28),
+    toonMaterial(PALETTE.woodDark)
+  );
+  rim.rotation.x = Math.PI / 2;
+  clock.add(rim);
+  const face = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.18, 0.012, 28),
+    toonMaterial(PALETTE.linen)
+  );
+  face.rotation.x = Math.PI / 2;
+  face.position.z = 0.035;
+  clock.add(face);
+  const secondHand = new THREE.Group();
+  secondHand.name = 'ambient-second-hand';
+  secondHand.position.z = 0.045;
+  box(secondHand, 0.012, 0.14, 0.01, PALETTE.brass, 0, 0.07, 0);
+  secondHand.userData.ambientClockHand = true;
+  clock.add(secondHand);
+  clock.position.set(x, y, z);
+  g.add(clock);
+}
+
+function dustMotes(g: THREE.Group) {
+  const dust = new THREE.Group();
+  dust.name = 'ambient-dust';
+  dust.userData.ambientDust = true;
+  dust.visible = false;
+  for (let index = 0; index < 5; index += 1) {
+    const mote = new THREE.Mesh(
+      new THREE.SphereGeometry(0.014 + (index % 2) * 0.006, 6, 5),
+      new THREE.MeshBasicMaterial({
+        color: PALETTE.linen,
+        transparent: true,
+        opacity: 0.58,
+        depthWrite: false,
+      })
+    );
+    mote.position.set(-0.23 + (index % 3) * 0.18, 1.36 + index * 0.13, -0.86);
+    mote.userData.ambientMote = index;
+    mote.userData.basePosition = mote.position.toArray();
+    mote.userData.noInk = true;
+    dust.add(mote);
+  }
+  g.add(dust);
 }
 
 function floorRug(g: THREE.Group, color: string, x = 0, z = 0.4) {
@@ -142,12 +243,11 @@ function smallBook(g: THREE.Group, x: number, y: number, z: number, color: strin
   box(g, 0.025, 0.084, 0.27, PALETTE.brass, x - 0.15, y, z);
 }
 
-function openBook(g: THREE.Group, x: number, y: number, z: number) {
+function openBook(x: number, y: number, z: number) {
   const book = new THREE.Group();
-  box(book, 1.08, 0.04, 0.56, TONES.leather, 0, 0, 0);
-  box(book, 0.52, 0.015, 0.52, PALETTE.linen, -0.27, 0.028, 0);
-  box(book, 0.52, 0.015, 0.52, PALETTE.linen, 0.27, 0.028, 0);
-  box(book, 0.035, 0.02, 0.53, PALETTE.woodDark, 0, 0.031, 0);
+  book.name = 'stair-notebook';
+  book.position.set(x, y, z);
+  book.rotation.y = -0.15;
   const sketch = roomCanvas(300, 320, (ctx) => {
     ctx.fillStyle = PALETTE.linen;
     ctx.fillRect(0, 0, 300, 320);
@@ -175,25 +275,143 @@ function openBook(g: THREE.Group, x: number, y: number, z: number) {
     ctx.lineTo(258, 64);
     ctx.stroke();
   });
-  const sketchPage = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.51, 0.5),
-    new THREE.MeshBasicMaterial({ map: texture(sketch), side: THREE.DoubleSide })
+  const pageTexture = texture(sketch);
+  const leftHinge = new THREE.Group();
+  leftHinge.name = 'stair-notebook-left-hinge';
+  const rightHinge = new THREE.Group();
+  rightHinge.name = 'stair-notebook-right-hinge';
+  for (const [hinge, side] of [[leftHinge, -1], [rightHinge, 1]] as const) {
+    const centerX = side * 0.27;
+    box(hinge, 0.55, 0.025, 0.56, TONES.leather, centerX, 0, 0);
+    box(hinge, 0.51, 0.018, 0.52, PALETTE.linen, centerX, 0.022, 0);
+    const page = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.49, 0.49),
+      new THREE.MeshBasicMaterial({
+        map: side < 0 ? pageTexture : null,
+        color: side < 0 ? PALETTE.paper : PALETTE.linen,
+        side: THREE.DoubleSide,
+      })
+    );
+    page.rotation.x = -Math.PI / 2;
+    page.position.set(centerX, 0.034, 0);
+    page.userData.noInk = side < 0;
+    hinge.add(page);
+    book.add(hinge);
+  }
+  box(book, 0.035, 0.045, 0.56, PALETTE.woodDark, 0, 0.015, 0);
+  book.userData.leftHinge = leftHinge;
+  book.userData.rightHinge = rightHinge;
+  return book;
+}
+
+function notesTexture() {
+  return texture(roomCanvas(320, 220, (ctx) => {
+    ctx.fillStyle = PALETTE.linen;
+    ctx.fillRect(0, 0, 320, 220);
+    ctx.strokeStyle = PALETTE.ink;
+    ctx.globalAlpha = 0.42;
+    ctx.lineWidth = 2;
+    for (let y = 24; y < 216; y += 22) {
+      ctx.beginPath();
+      ctx.moveTo(18, y);
+      ctx.lineTo(298, y - (y % 3));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(34, 44);
+    ctx.lineTo(104, 39);
+    ctx.moveTo(34, 69);
+    ctx.lineTo(124, 73);
+    ctx.moveTo(152, 94);
+    ctx.lineTo(262, 90);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }));
+}
+
+function cutNotes() {
+  const notes = new THREE.Group();
+  notes.name = 'wk-notes';
+  const paper = box(notes, 0.64, 0.045, 0.46, PALETTE.paper, 0, 0.025, 0);
+  paper.castShadow = true;
+  const page = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.6, 0.42),
+    new THREE.MeshBasicMaterial({ map: notesTexture(), side: THREE.DoubleSide })
   );
-  sketchPage.rotation.x = -Math.PI / 2 + 0.55;
-  sketchPage.position.set(-0.27, 0.22, 0);
-  sketchPage.userData.noInk = true;
-  book.add(sketchPage);
-  const rightPage = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.51, 0.5),
-    new THREE.MeshBasicMaterial({ color: PALETTE.linen, side: THREE.DoubleSide })
+  page.name = 'wk-notes-page-fan';
+  page.rotation.x = -Math.PI / 2;
+  page.position.set(0, 0.05, 0);
+  page.userData.noInk = true;
+  notes.add(page);
+  const hinge = new THREE.Group();
+  hinge.name = 'wk-notes-cover-hinge';
+  hinge.position.x = -0.32;
+  const cover = box(hinge, 0.66, 0.045, 0.48, TONES.leather, 0.32, 0.075, 0);
+  cover.name = 'wk-notes-cover';
+  box(hinge, 0.62, 0.012, 0.44, PALETTE.paperDeep, 0.32, 0.101, 0);
+  notes.add(hinge);
+  notes.userData.coverHinge = hinge;
+  notes.position.set(-0.38, 0.84, -0.98);
+  notes.rotation.y = -0.08;
+  return notes;
+}
+
+function bartleboothHand() {
+  const hand = new THREE.Group();
+  hand.name = 'bb-hand';
+  hand.position.set(0.39, 1.01, 0.64);
+  hand.scale.set(-0.62, 0.62, 1);
+  hand.rotation.z = -0.08;
+  const poses = ['closed', 'half', 'open'] as const;
+  for (const pose of poses) {
+    const canvas = roomCanvas(260, 170, (ctx) => drawBartleboothHand(ctx, pose));
+    const map = texture(canvas);
+    const material = toonMaterial(PALETTE.paper, {
+      map,
+      transparent: true,
+      alphaTest: 0.08,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.43), material);
+    mesh.name = `bb-hand-${pose}`;
+    mesh.position.z = 0.012;
+    mesh.castShadow = true;
+    mesh.visible = pose === 'closed';
+    mesh.customDepthMaterial = new THREE.MeshDepthMaterial({
+      depthPacking: THREE.RGBADepthPacking,
+      map,
+      alphaTest: 0.08,
+    });
+    mesh.userData.noInk = true;
+    mesh.userData.handPose = pose;
+    mesh.userData.cutout = map;
+    hand.add(mesh);
+  }
+  return hand;
+}
+
+function keyring() {
+  const keys = new THREE.Group();
+  keys.name = 'keyring';
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.12, 0.018, 8, 24),
+    toonMaterial(PALETTE.brass)
   );
-  rightPage.rotation.x = -Math.PI / 2 + 0.55;
-  rightPage.position.set(0.27, 0.22, 0);
-  rightPage.userData.noInk = true;
-  book.add(rightPage);
-  book.position.set(x, y, z);
-  book.rotation.y = -0.15;
-  g.add(book);
+  ring.position.y = 0.02;
+  ring.rotation.x = Math.PI / 2;
+  ring.castShadow = true;
+  keys.add(ring);
+  for (const [index, x] of [-0.08, 0.01, 0.1].entries()) {
+    const shaft = cylinder(keys, 0.012, 0.012, 0.32 + index * 0.04, PALETTE.brass, x, -0.19, 0.02);
+    shaft.rotation.z = (index - 1) * 0.08;
+    box(keys, 0.07, 0.025, 0.035, PALETTE.brass, x, -0.36 - index * 0.02, 0.02);
+  }
+  keys.position.set(-0.1, 1.04, 0.4);
+  keys.scale.setScalar(0.8);
+  return keys;
 }
 
 function framedCanvas(g: THREE.Group, x: number, y: number, z: number, w: number, h: number, map: THREE.Texture) {
@@ -228,7 +446,16 @@ function portrait(memberId: NonNullable<CellScene['resident']>) {
 function residentFigure(g: THREE.Group, scene: CellScene, x: number, z: number, height = 1.95) {
   if (!scene.resident) return;
   const member = CAST[scene.resident];
-  const f = paperCutout(figureCanvas(member), height, { mirror: scene.kind === 'atelier' });
+  const f = paperCutout(
+    figureCanvas(member, {
+      hideFrontHand: scene.kind === 'atelier' && scene.resident === 'bartlebooth',
+    }),
+    height,
+    { mirror: scene.kind === 'atelier' }
+  );
+  f.name = 'resident-figure';
+  f.userData.sketchFigure = true;
+  f.userData.ambientFigure = true;
   f.position.set(x, 0, z);
   f.rotation.y = scene.kind === 'atelier' ? 0.12 : -0.08;
   g.add(f);
@@ -280,6 +507,7 @@ function liftCage(g: THREE.Group) {
   g.add(face);
   const needle = box(g, 0.018, 0.085, 0.018, PALETTE.brass, 0.86, 1.15, -1.2);
   needle.rotation.z = -0.48;
+  needle.name = 'lift-dial-needle';
 }
 
 function keyBoard(g: THREE.Group) {
@@ -385,7 +613,7 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       box(g, 0.1, 0.42, 0.08, PALETTE.woodDark, 1.18, 0.24, -0.62);
       box(g, 0.12, 0.18, 0.06, PALETTE.brass, 1.18, 0.45, -0.57);
       box(g, 0.035, 0.12, 0.025, PALETTE.ink, 1.18, 0.45, -0.53);
-      if (cellId === '3:6') openBook(g, -0.72, 0.14, 0.7);
+      if (cellId === '3:6') g.add(openBook(-0.72, 0.14, 0.7));
       floorRug(g, PALETTE.paperDeep, -0.7, 0.2);
       break;
     case 'hall':
@@ -399,11 +627,13 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       box(g, 0.7, 0.55, 0.025, PALETTE.linen, -0.82, 1.52, -1.39);
       box(g, 0.035, 0.25, 0.025, PALETTE.ink, -1.06, 1.52, -1.36);
       keyBoard(g);
+      if (cellId === '0:5') g.add(keyring());
       broom(g, -1.32, -0.48);
       residentFigure(g, scene, 0.58, -0.12, 1.85);
+      if (cellId === '0:5') wallClock(g, -1.12, 2.13, -1.37);
       break;
     case 'atelier': {
-      floorRug(g, TONES.navy, 0.22, 0.26);
+      floorRug(g, PALETTE.washNavy, 0.22, 0.26);
       const chair = bentwoodChair({ color: PALETTE.woodDark });
       chair.position.set(0.76, 0, 0.45);
       chair.rotation.y = -0.2;
@@ -414,20 +644,62 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       g.add(table);
       const harbour = harbourTexture({ puzzle: true });
       box(g, 0.98, 0.026, 0.62, PALETTE.linen, -0.2, 0.756, -0.1);
-      const puzzle = new THREE.Mesh(
+      const puzzle = new THREE.Group();
+      puzzle.name = 'bb-puzzle';
+      puzzle.position.set(-0.2, 0.772, -0.1);
+      const surface = new THREE.Mesh(
         new THREE.PlaneGeometry(0.92, 0.56),
         new THREE.MeshBasicMaterial({ map: harbour })
       );
-      puzzle.rotation.x = -Math.PI / 2;
-      puzzle.position.set(-0.2, 0.772, -0.1);
-      puzzle.userData.noInk = true;
+      surface.rotation.x = -Math.PI / 2;
+      surface.position.y = 0.002;
+      surface.userData.noInk = true;
+      surface.name = 'bb-puzzle-surface';
+      const outlinePoints = [
+        [-0.22, -0.27],
+        [-0.09, -0.08],
+        [0, -0.16],
+        [0.09, -0.08],
+        [0.22, -0.27],
+        [0.28, -0.21],
+        [0.12, 0],
+        [0.28, 0.21],
+        [0.22, 0.27],
+        [0.09, 0.08],
+        [0, 0.16],
+        [-0.09, 0.08],
+        [-0.22, 0.27],
+        [-0.28, 0.21],
+        [-0.12, 0],
+        [-0.28, -0.21],
+      ].map(([x, z]) =>
+        new THREE.Vector3(0.077 + x * 0.3, 0, 0.07 + z * 0.3)
+      );
+      const outlineCurve = new THREE.CatmullRomCurve3(outlinePoints, true, 'centripetal');
+      const trace = new THREE.Mesh(
+        new THREE.TubeGeometry(outlineCurve, 96, 0.0024, 8, true),
+        new THREE.MeshBasicMaterial({
+          color: PALETTE.ink,
+          transparent: true,
+          opacity: 0.96,
+          depthTest: true,
+          depthWrite: false,
+        })
+      );
+      trace.name = 'bb-puzzle-trace';
+      trace.position.y = 0.008;
+      trace.visible = false;
+      trace.userData.noInk = true;
+      puzzle.add(surface, trace);
       g.add(puzzle);
       const piece = knightPiece(0.22);
+      piece.name = 'bb-puzzle-piece';
       piece.position.set(0.14, 0.8, -0.08);
       g.add(piece);
       teaCup(g, 0.28, 0.84, 0.16);
       magnifier(g, -0.59, 0.84, 0.12);
       residentFigure(g, scene, 0.75, 0.48, 1.7);
+      g.add(bartleboothHand());
       break;
     }
     case 'sill':
@@ -449,8 +721,9 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       framedCanvas(g, -0.58, 1.74, -1.4, 0.52, 0.92, portrait('winckler'));
       if (cellId === '6:8') {
         place(g, turnedTable({ w: 1.58, d: 0.64, h: 0.82, color: PALETTE.woodDark }), -0.38, -0.98);
+        g.add(cutNotes());
         for (let i = 0; i < 4; i += 1) {
-          const offcut = box(g, 0.34 - i * 0.035, 0.035, 0.075, PALETTE.wood, -0.76 + i * 0.19, 0.86 + i * 0.018, -0.98 + (i % 2) * 0.19);
+          const offcut = box(g, 0.34 - i * 0.035, 0.035, 0.075, PALETTE.wood, -0.05 + i * 0.1, 0.86 + i * 0.018, -0.82 + (i % 2) * 0.08);
           offcut.rotation.y = -0.12 + i * 0.08;
         }
         for (const x of [-0.52, -0.19]) {
@@ -501,13 +774,37 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
         cylinder(g, 0.045, 0.045, 0.16, PALETTE.linen, 0.55 + i * 0.26, 0.57, -0.55);
       }
       place(g, turnedTable({ w: 1.1, d: 0.62, h: 0.8, color: PALETTE.woodDark }), 0.45, -0.45);
-      magnifier(g, 0.68, 0.84, -0.16);
+      const loupe = new THREE.Group();
+      loupe.name = 'loupe';
+      magnifier(loupe, 0, 0, 0);
+      loupe.position.set(0.68, 0.84, -0.16);
+      g.add(loupe);
       residentFigure(g, scene, 1.0, 0.4, 1.9);
       break;
     case 'boiler':
       place(g, boiler(), -0.52, -0.48);
       place(g, coalPile(seed + 21, 48), 0.62, 0.44);
       for (let i = 0; i < 3; i++) cylinder(g, 0.035, 0.035, 1.5, TONES.steel, -1.35 + i * 0.2, 1.0, -1.4);
+      {
+        const fire = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.32, 0.38),
+          new THREE.MeshBasicMaterial({
+            color: PALETTE.accent,
+            transparent: true,
+            opacity: 0.76,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          })
+        );
+        fire.name = 'ambient-boiler-fire';
+        fire.position.set(-0.52, 0.54, 0.04);
+        fire.userData.noInk = true;
+        g.add(fire);
+        const fireLight = new THREE.PointLight(PALETTE.accent, 1.4, 3.4);
+        fireLight.name = 'ambient-fire-light';
+        fireLight.position.set(-0.52, 0.62, 0.18);
+        g.add(fireLight);
+      }
       break;
     case 'shop':
       place(g, shopCounter({ w: 2.5, seed }), 0, -0.8);
@@ -516,6 +813,7 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
       box(g, 0.34, 0.028, 0.24, PALETTE.paperDeep, -0.32, 0.97, -0.56);
       box(g, 0.29, 0.012, 0.19, PALETTE.linen, -0.32, 0.991, -0.56);
       box(g, 0.025, 0.034, 0.24, PALETTE.accent, -0.47, 0.97, -0.56);
+      if (cellId === '0:3') wallClock(g, 1.03, 2.12, -1.37);
       break;
     case 'archive':
       dictionaryBoxes(g);
@@ -554,6 +852,38 @@ function furnish(g: THREE.Group, scene: CellScene, cellId: string) {
 
 }
 
+function sidePartition(group: THREE.Group, side: -1 | 1, sameApartment: boolean) {
+  const { W, H, D } = CELL_ROOM;
+  const x = side * (W / 2);
+  if (!sameApartment) {
+    const wall = sectionBox(0.12, H, D, toonMaterial(cellScene(group.userData.cellId).wall));
+    wall.position.set(x, H / 2, 0);
+    group.add(wall);
+    return;
+  }
+
+  const thickness = 0.08;
+  const doorZ = 1.12;
+  const doorWidth = 0.96;
+  const doorHeight = 2.12;
+  const doorStart = doorZ - doorWidth / 2;
+  const doorEnd = doorZ + doorWidth / 2;
+  for (const [start, end] of [[-D / 2, doorStart], [doorEnd, D / 2]] as const) {
+    const depth = end - start;
+    if (depth < 0.02) continue;
+    const wall = sectionBox(thickness, H, depth, toonMaterial(cellScene(group.userData.cellId).wall));
+    wall.position.set(x, H / 2, (start + end) / 2);
+    group.add(wall);
+  }
+  const lintel = sectionBox(thickness, H - doorHeight, doorWidth, toonMaterial(cellScene(group.userData.cellId).wall));
+  lintel.position.set(x, doorHeight + (H - doorHeight) / 2, doorZ);
+  group.add(lintel);
+  for (const z of [doorStart, doorEnd]) {
+    box(group, 0.06, doorHeight, 0.045, PALETTE.woodDark, x, doorHeight / 2, z);
+  }
+  box(group, 0.06, 0.07, doorWidth + 0.1, PALETTE.woodDark, x, doorHeight, doorZ);
+}
+
 export function buildCellRoom(scene: CellScene, cellId: string): THREE.Group {
   const group = new THREE.Group();
   group.name = `cell-room:${cellId}`;
@@ -562,14 +892,12 @@ export function buildCellRoom(scene: CellScene, cellId: string): THREE.Group {
   group.userData.hasPendant = !['sill', 'boiler', 'clinamen'].includes(scene.kind);
   const { W, H, D } = CELL_ROOM;
   const wall = wallCanvas(scene);
-  const hasWindow = !['hall', 'workshop', 'boiler', 'archive', 'clinamen'].includes(scene.kind);
-
-  for (const side of [-1, 1]) {
-    const wallMesh = sectionBox(0.12, H, D, toonMaterial(scene.wall));
-    wallMesh.position.set(side * (W / 2), H / 2, 0);
-    group.add(wallMesh);
-  }
+  const cell = CELL_BY_ID[cellId];
+  const hasWindow = cell.floor !== -1 && !['hall', 'workshop', 'boiler', 'archive', 'clinamen'].includes(scene.kind);
+  sidePartition(group, -1, CELL_BY_ID[`${cell.floor}:${cell.col - 1}`]?.apartmentId === cell.apartmentId);
+  sidePartition(group, 1, CELL_BY_ID[`${cell.floor}:${cell.col + 1}`]?.apartmentId === cell.apartmentId);
   const slab = sectionBox(W + 0.12, 0.24, D + 0.14, toonMaterial(PALETTE.floorDark));
+  slab.userData.noInk = scene.kind === 'stair' || cellId === '0:7' || cellId === '-1:7';
   slab.position.set(0, -0.12, 0);
   group.add(slab);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), toonMaterial(scene.floor));
@@ -582,6 +910,8 @@ export function buildCellRoom(scene: CellScene, cellId: string): THREE.Group {
     : null;
   if (!hasWindow) {
     box(group, W, H, 0.12, toonMaterial(PALETTE.paper, { map: wall }), 0, H / 2, -D / 2);
+  } else {
+    dustMotes(group);
   }
 
   box(group, W, 0.12, 0.05, PALETTE.woodDark, 0, 0.06, -D / 2 + 0.04);

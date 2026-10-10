@@ -6,9 +6,6 @@ import { cardIconUrl } from '../../art/cardIcons';
 import { drawDiceHand } from '../../art/draw/hand';
 import { chapterNumeral } from '../../world/damier';
 import { lockReasonText, type RoomSheet, type SheetLine } from '../../engine/selectors';
-import type { StageHotspot } from '../../art/stage';
-import RoomStage from './RoomStage';
-import type { Hour } from './DamierCanvas';
 
 export interface PendingLineCheck {
   lineId: string;
@@ -27,12 +24,9 @@ interface RoomPageProps {
   onArm: (lineId: string | null) => void;
   onAct: (line: SheetLine) => void;
   onCheckDone: () => void;
-  hour: Hour;
   playerCoatTone: string;
-  stageMode: 'print' | 'blueprint';
   highlightedLineId: string | null;
   onHighlightLine: (lineId: string | null) => void;
-  onStagePick: (lineId: string) => void;
   readOnly?: boolean;
 }
 
@@ -161,18 +155,12 @@ const RoomPage: React.FC<RoomPageProps> = ({
   onArm,
   onAct,
   onCheckDone,
-  hour,
   playerCoatTone,
-  stageMode,
   highlightedLineId,
   onHighlightLine,
-  onStagePick,
   readOnly,
 }) => {
   const consumedText = prose?.journal || [];
-  const hotspots: StageHotspot[] = readOnly
-    ? []
-    : sheet.lines.map((line) => ({ lineId: line.id, status: line.status, kind: line.kind }));
 
   return (
     <article className="world-card chapter-card p-5 md:p-7">
@@ -183,17 +171,6 @@ const RoomPage: React.FC<RoomPageProps> = ({
           格 {sheet.cellId} · 清单 {sheet.done}/{sheet.total}
         </div>
       </header>
-
-      <RoomStage
-        input={{
-          cellId: sheet.cellId,
-          hour,
-          hotspots,
-          highlight: readOnly ? null : highlightedLineId,
-          mode: stageMode,
-        }}
-        onPick={onStagePick}
-      />
 
       <div className="world-prose mt-4 text-[15px]">
         {generating && !prose ? <p className="italic text-stone-500">瓦莱纳在回想这一格……</p> : <p>{prose?.text}</p>}

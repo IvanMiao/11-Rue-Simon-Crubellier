@@ -47,9 +47,55 @@ export const ANCHORS: Record<string, [number, number, number]> = {
   'ev-ch-coal': [0.62, 0.3, 0.44],
   'ev-an-receipt': [-0.32, 0.98, -0.56],
   'ev-ci-dict': [1.05, 1.44, -0.99],
-  'it-keyring': [0.86, 1.78, -1.35],
+  'it-keyring': [-0.1, 1.04, 0.4],
   'it-loupe': [0.68, 0.84, -0.16],
   '100-1-finale': [0, 0.82, 0.25],
+};
+
+export const PLAYER_SPOT: Record<CellRoomKind, [x: number, y: number, z: number]> = {
+  stair: [1.38, 0.015, -0.2],
+  hall: [-1.28, 0.015, -0.2],
+  loge: [1.28, 0.015, -0.2],
+  atelier: [1.28, 0.015, -0.2],
+  sill: [1.28, 0.015, -0.2],
+  workshop: [1.28, 0.015, -0.2],
+  servant: [-1.28, 0.015, -0.2],
+  studio: [-1.28, 0.015, -0.2],
+  lab: [-1.28, 0.015, -0.2],
+  boiler: [1.28, 0.015, -0.2],
+  shop: [1.28, 0.015, -0.2],
+  archive: [-1.28, 0.015, -0.2],
+  clinamen: [1.28, 0.015, -0.2],
+  empty: [1.28, 0.015, -0.2],
+};
+
+export const PLAYER_SPOT_BY_CELL: Record<string, [x: number, y: number, z: number]> = {
+  '3:6': [1.2, 0.015, 0.7],
+  '3:1': [0, 0.015, 0.6],
+  '6:8': [1, 0.015, 0.85],
+  '8:7': [-1.12, 0.015, 0.84],
+};
+
+export function playerSpot(cellId: string): [x: number, y: number, z: number] {
+  const override = PLAYER_SPOT_BY_CELL[cellId];
+  return override ? [...override] : [...PLAYER_SPOT[cellScene(cellId).kind]];
+}
+
+export const PLAYER_SPOT_ANCHORS: Partial<Record<CellRoomKind, readonly string[]>> = {
+  stair: ['ev-stair-notebook'],
+  hall: ['ev-hall-mailboxes', 'ev-hall-lift'],
+  loge: ['ev-loge-notice', 'ev-loge-ask'],
+  atelier: ['ev-bb-puzzle', 'ev-bb-hand', 'ev-bb-hand-late'],
+  sill: ['ev-bb-sill'],
+  workshop: ['ev-wk-bench', 'ev-wk-chair'],
+  servant: ['ev-sm-ask'],
+  studio: ['ev-va-ask', 'ev-va-canvas'],
+  lab: ['ev-mo-vat'],
+  boiler: ['ev-ch-coal'],
+  shop: ['ev-an-receipt'],
+  archive: ['ev-ci-dict'],
+  clinamen: ['100-1-finale'],
+  empty: [],
 };
 
 function hash(value: string): number {
@@ -97,13 +143,24 @@ export function cellScene(cellId: string): CellScene {
   }
   if (apartmentId === '0-4') return scene('loge', cellId, apartmentId, 'nochere');
   if (apartmentId === '3-1') {
-    return scene(cellId === '3:1' ? 'atelier' : 'sill', cellId, apartmentId, cellId === '3:1' ? 'bartlebooth' : undefined);
+    if (cellId === '3:1') return scene('atelier', cellId, apartmentId, 'bartlebooth');
+    return {
+      ...scene('sill', cellId, apartmentId),
+      wall: PALETTE.castWallCream,
+      floor: PALETTE.paperDeep,
+    };
   }
   if (apartmentId === '6-3') return scene('workshop', cellId, apartmentId, 'winckler');
   if (apartmentId === '8-2') return scene('servant', cellId, apartmentId, 'smautf');
   if (apartmentId === '7-7') return scene('studio', cellId, apartmentId, 'valene');
   if (apartmentId === '8-6') return scene('lab', cellId, apartmentId, 'morellet');
-  if (apartmentId === '-1-3') return scene('boiler', cellId, apartmentId);
+  if (apartmentId === '-1-3') {
+    return {
+      ...scene('boiler', cellId, apartmentId),
+      wall: PALETTE.castWallStone,
+      floor: PALETTE.floorDark,
+    };
+  }
   if (apartmentId === '0-3') return scene('shop', cellId, apartmentId);
   if (apartmentId === '6-1') return scene('archive', cellId, apartmentId);
   return { ...scene('empty', cellId, apartmentId), wall: PALETTE.plaster, floor: PALETTE.paperDeep };
